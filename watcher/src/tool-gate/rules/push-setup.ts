@@ -13,7 +13,7 @@ import { runsItsArguments, SAFE_GIT_VARIABLE, type CommandPart } from '../comman
 import { matchCommand } from '../patterns.js';
 import { longOption, scriptFactsOf } from '../sed-awk.js';
 import { UNKNOWN } from '../tokenize.js';
-import { rawDestination } from './protected-branch.js';
+import { isLocalUrl, positionalsOf, rawDestination, remoteTracking, replaceRef } from './protected-branch.js';
 import { readPushWords } from './push-words.js';
 import type { Refusal } from './refusal.js';
 
@@ -47,8 +47,6 @@ const PUSH_KEYS = [
   'merge.*.driver', 'gpg.program', 'gpg.*.program', 'uploadpack.packobjectshook', 'difftool.*.cmd', 'mergetool.*.cmd',
   'web.browser', 'browser.*.cmd', 'browser.*.path', 'man.*.cmd', 'man.*.path',
 ];
-/** Sections whose renaming or removal moves those keys. */
-const PUSH_SECTIONS = new Set(PUSH_KEYS.map((key) => key.split('.')[0]));
 
 /**
  * One `git config` option (git syntax, git 2.54 `git config [<verb>] -h`): its long name, its
@@ -266,7 +264,9 @@ function readConfigWords(args: readonly string[]): { verb: string | null; action
  * writes others; `unreadable` (the option word) when its options can't be read as git reads them.
  * A credential helper (`credential[.<url>].helper`) counts when its value runs a program the agent
  * may have written (helperRuns), in any write form: plain, `--add`, `--replace-all`, `set`, with
- * `--global` / `--system` / `--local` / `--worktree` / `--file`.
+ * `--global` / `--system` / `--local` / `--worktree` / `--file`. A key `git -c` is refused for
+ * (RUN_ANY_KEYS: ref history, OSS's own settings, protocol.allow …) counts whatever its value, so the
+ * two forms read one list (gate-gaps-r3 Task 8).
  */
 function pushKeyWritten(args: string[]): string | { unreadable: string } | null {
   const words = readConfigWords(args);
@@ -279,10 +279,12 @@ function pushKeyWritten(args: string[]): string | { unreadable: string } | null 
   const key = positional[0];
   if (key === undefined || read || !(write || section || positional.length >= 2)) return null;
   const lower = key.toLowerCase();
-  if (section) return PUSH_SECTIONS.has(lower.split('.')[0]) ? key : null;
+  // a rename moves the keys of the old section and makes those of the new one
+  if (section) return positional.slice(0, 2).find((name) => WRITE_SECTIONS.has(name.toLowerCase().split('.')[0])) ?? null;
   // a credential helper git runs: the same value checks as `git -c` (K5, K8, K9, K10), in every write form (K11)
   if (keyMatches(CREDENTIAL_KEYS, lower)) return positional[1] !== undefined && helperRuns(positional[1]) ? key : null;
-  return PUSH_KEYS.some((pattern) => matchCommand(pattern, [lower])) ? key : null;
+  // one list with `git -c` (Task 4's protocol.* pick): a key refused there is refused here
+  return keyMatches(PUSH_KEYS, lower) || keyMatches(RUN_ANY_KEYS, lower) ? key : null;
 }
 
 /**
@@ -347,9 +349,16 @@ function cantCheck(why: string, subcommand = 'push'): Refusal {
   };
 }
 
-/** `git remote add --mirror`: every later push to that remote sends all refs, protected branches too. */
+/** The `git remote` subcommand and the words after it: git takes options (`-v`) before it. */
+function remoteVerb(args: readonly string[]): { verb: string | undefined; rest: readonly string[] } {
+  const at = args.findIndex((a) => !a.startsWith('-'));
+  return at === -1 ? { verb: undefined, rest: [] } : { verb: args[at], rest: args.slice(at + 1) };
+}
+
+/** `git remote add --mirror`, wherever the options sit: every later push to that remote sends all refs, protected branches too. */
 function addsMirror(git: NonNullable<CommandPart['git']>): boolean {
-  return git.subcommand === 'remote' && git.args[0] === 'add' && git.args.some((a) => a === '--mirror' || a.startsWith('--mirror='));
+  if (git.subcommand !== 'remote' || remoteVerb(git.args).verb !== 'add') return false;
+  return git.args.some((a) => a === '--mirror' || a.startsWith('--mirror='));
 }
 
 /** The reason a push or commit runs in a folder the gate can't follow, or null. */
@@ -400,6 +409,9 @@ function checkCommitSetup(part: CommandPart, earlier: readonly CommandPart[], co
  * the gate passes the whole call and the part's index, so no list is copied per part.
  */
 export function checkPushSetup(part: CommandPart, earlier: readonly CommandPart[], count = earlier.length): Refusal | null {
+  // ship round 1, S4 (restored in round 3, R3-1): the env twin of the protocol keys, set for a call, alone or
+  // exported, whatever runs next; read from the part's words, so a quote-split name (`GIT_ALLOW_PROT''OCOL`) counts
+  if (settingsOf(part).some(([name]) => name === 'GIT_ALLOW_PROTOCOL')) return ALLOW_PROTOCOL_REFUSAL;
   const planted = plantedConfig(part, earlier, count);
   if (planted !== null) {
     return {
@@ -407,6 +419,8 @@ export function checkPushSetup(part: CommandPart, earlier: readonly CommandPart[
       reason: `Refused: \`git ${part.git?.subcommand}\` with \`${planted}\` plants config or hooks in the new repository, which can change where pushes go or what git runs. Ask the user to run it with \`!\`.`,
     };
   }
+  if (carriesKey(OSS_KEYS, part, earlier, count)) return OSS_REFUSAL;
+  if (carriesKey(REF_HISTORY_KEYS, part, earlier, count)) return REF_HISTORY_REFUSAL;
   const tty = fakeTtyPager(part, earlier, count);
   if (tty !== null) return runsRefusal(tty, `\`git ${part.git?.subcommand}\` (it has a terminal, so git starts its pager)`);
   const runs = runConfig(part, earlier, count) ?? uploadProgram(part);
@@ -420,6 +434,8 @@ export function checkPushSetup(part: CommandPart, earlier: readonly CommandPart[
         reason: `Refused: the gate can't read \`git config\` option \`${key.unreadable}\` (one git doesn't have, or short for several), so it can't tell which key is written. Spell the options in full.`,
       };
     }
+    if (keyMatches(OSS_KEYS, key) || key.toLowerCase() === 'oss') return OSS_REFUSAL;
+    if (keyMatches(REF_HISTORY_KEYS, key)) return REF_HISTORY_REFUSAL;
     return {
       rule: 'protected-branch',
       reason: `Refused: \`git config ${key}\` changes where pushes go or what git runs. Ask the user to change it with \`!\`.`,
@@ -447,6 +463,190 @@ export function checkPushSetup(part: CommandPart, earlier: readonly CommandPart[
   }
   const program = uploadProgram(part);
   return program === null ? programVariableRefusal(part, earlier, count) : runsRefusal(program, '`git push`');
+}
+
+/** Config keys that set where a remote fetches from or pushes to (git syntax, lowercased). */
+const REMOTE_URL_KEYS = ['remote.*.url', 'remote.*.pushurl'];
+/** `url.<base>.insteadOf` / `pushInsteadOf` (git syntax): URLs are rewritten to start with `<base>`. */
+const INSTEAD_OF = /^url\.(.*)\.(?:push)?insteadof$/i;
+/** `remote.<name>.fetch` (git syntax): the refspec a plain fetch of that remote maps refs with. */
+const REMOTE_FETCH = /^remote\.(.*)\.fetch$/i;
+
+/**
+ * True when one config setting (`value` undefined: only known when git runs) can point a remote at
+ * this machine or forge its remote-tracking refs (gate-gaps-r3 Task 7 and its picks): a remote URL
+ * that is local, an insteadOf whose base is local, or a fetch mapping into refs/remotes/ other than
+ * the remote's own default (`[+]refs/heads/*:refs/remotes/<name>/*`).
+ */
+function forgesRemote(key: string, value: string | undefined): boolean {
+  if (keyMatches(REMOTE_URL_KEYS, key)) return value === undefined || isLocalUrl(value);
+  const base = INSTEAD_OF.exec(key);
+  if (base !== null) return isLocalUrl(base[1]);
+  const name = REMOTE_FETCH.exec(key);
+  if (name === null) return false;
+  if (value === undefined) return true;
+  const spec = value.startsWith('+') ? value.slice(1) : value;
+  if (spec.includes(':') && replaceRef(rawDestination(spec))) return true;
+  return spec.includes(':') && remoteTracking(rawDestination(spec), true) && spec !== `refs/heads/*:refs/remotes/${name[1]}/*`;
+}
+/** `git remote add` options that take the next word as their value (git syntax). */
+const REMOTE_ADD_VALUES = new Set(['-t', '--track', '-m', '--master']);
+
+const LOCAL_REMOTE_REFUSAL: Refusal = {
+  rule: 'protected-branch',
+  reason: 'Refused: this git call points a remote at a path on this machine or a `file://` URL, which can be the repository itself and forge its remote-tracking refs. Ask the user to add it with `!`.',
+};
+
+/**
+ * Refuses a git part that points a remote at a local path or `file://` URL (isLocalUrl; gate-gaps-r3
+ * Task 7) with `git remote add` / `set-url` (`--add`, `--push`; not `--delete`), or that carries a
+ * setting forgesRemote judges, through `-c`, `--config-env` (its value is only known when it runs)
+ * or a `GIT_CONFIG_KEY_n` set for it or earlier in the call. A push refuses any config it carries
+ * already (checkPushSetup), and `git config` writes of these keys are push keys.
+ */
+export function checkLocalRemote(part: CommandPart, earlier: readonly CommandPart[], count = earlier.length): Refusal | null {
+  return part.git !== null && part.git.subcommand !== 'push' && localRemote(part.git, part, earlier, count) ? LOCAL_REMOTE_REFUSAL : null;
+}
+
+function localRemote(git: NonNullable<CommandPart['git']>, part: CommandPart, earlier: readonly CommandPart[], count: number): boolean {
+  if (git.subcommand === 'remote') {
+    const { verb, rest } = remoteVerb(git.args);
+    if ((verb === 'add' || (verb === 'set-url' && !rest.includes('--delete'))) && isLocalUrl(positionalsOf(rest, REMOTE_ADD_VALUES)[1] ?? '')) return true;
+  }
+  const globals = part.words.slice(1, part.words.length - git.args.length - 1);
+  for (let i = 0; i < globals.length; i++) {
+    const w = globals[i];
+    const env = w === '--config-env' ? globals[i + 1] : w.startsWith('--config-env=') ? w.slice('--config-env='.length) : undefined;
+    if (env !== undefined && forgesRemote(keyOf(env), undefined)) return true;
+    const setting = w === '-c' ? globals[i + 1] : undefined;
+    if (setting !== undefined && forgesRemote(keyOf(setting), setting.includes('=') ? setting.slice(setting.indexOf('=') + 1) : undefined)) return true;
+  }
+  const settings = callSettings(part, earlier, count);
+  return settings.some(([name, value]) => {
+    if (!CONFIG_KEY_VARIABLE.test(name)) return false;
+    const paired = settings.find(([other]) => other === name.replace('_KEY_', '_VALUE_'));
+    return forgesRemote(value, paired?.[1]);
+  });
+}
+
+/** The refusal for `GIT_ALLOW_PROTOCOL`: fixed text, so no value is repeated. */
+const ALLOW_PROTOCOL_REFUSAL: Refusal = {
+  rule: 'protected-branch',
+  reason: 'Refused: `GIT_ALLOW_PROTOCOL` lets git use protocols such as `ext::`, which runs a command. Ask the user to run it with `!`.',
+};
+
+/**
+ * Ship fix round 2, R2-2 ("Blunt: refuse any mention"): a command whose text names `GIT_ALLOW_PROTOCOL`, as git
+ * reads it (case-sensitive). Round 4, R4-3 ("Both layers"): the text is read with quotes and backslashes removed
+ * (`GIT_ALLOW_PROT''OCOL`, inside `env -S`, `+=`); on a line that runs git, a setter whose name the gate can't read
+ * is refused (the transport layer is `checkTransportMention`).
+ */
+export function checkAllowProtocolMention(command: string, parts: readonly CommandPart[] = []): Refusal | null {
+  const plain = command.replace(/['"\\]/g, '');
+  if (plain.includes('GIT_ALLOW_PROTOCOL')) return ALLOW_PROTOCOL_REFUSAL;
+  return runsGit(parts) && (INDIRECT_ASSIGNMENT.test(command) || parts.some(setsUnreadableName)) ? ALLOW_PROTOCOL_REFUSAL : null;
+}
+
+/** An assignment through an indirect name (ship fix round 7, R7-3): `${!n:=v}`, `${!n=v}`, zsh `${(P)n::=v}`. */
+const INDIRECT_ASSIGNMENT = /\$\{(?:!|\([^)]*P[^)]*\))[^}]*?=/;
+
+/** True when some part of the call runs git. */
+function runsGit(parts: readonly CommandPart[]): boolean {
+  return parts.some((p) => p.git !== null || p.words.includes('git'));
+}
+
+/**
+ * R4-3 (2): an `ext::` or `fd::` transport anywhere on a line that runs git, quotes and backslashes removed, in any
+ * case. Checked after the push-setup rule, so a config key that runs a program keeps its own reason.
+ */
+export function checkTransportMention(command: string, parts: readonly CommandPart[]): Refusal | null {
+  // round 5, R5-1 F1: text right after `::` is a path (`std::os::fd::`, `crate::ext::`), not a transport
+  return runsGit(parts) && /(?:^|[^A-Za-z0-9+:-])(?:ext|fd)::/i.test(command.replace(/['"\\]/g, '')) ? TRANSPORT_REFUSAL : null;
+}
+
+const TRANSPORT_REFUSAL: Refusal = {
+  rule: 'protected-branch',
+  reason: 'Refused: an `ext::` or `fd::` git transport runs a command or talks over an open file. Ask the user to run it with `!`.',
+};
+
+/**
+ * The options of `read` and `mapfile`/`readarray` that take a value, which is not a name being set (round 5, R5-1 F2);
+ * `read -a` takes the NAME of an array.
+ */
+const VALUE_OPTIONS: Readonly<Record<string, string>> = { read: 'ptudnNi', mapfile: 'udnOsCc', readarray: 'udnOsCc' };
+
+/** The names a `read`, `mapfile`/`readarray`, `printf -v` or `getopts` part sets, as the gate reads them (R4-3, R5-1 F2, R6-1 fail closed). */
+function namesSetBy(program: string, args: readonly string[]): string[] {
+  if (program === 'getopts') return args[1] === undefined ? [] : [args[1]];
+  const names: string[] = [];
+  const values = VALUE_OPTIONS[program] ?? '';
+  let options = true;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (options && a === '--') options = false;
+    else if (options && /^-[A-Za-z]/.test(a)) {
+      for (let k = 1; k < a.length; k++) {
+        const letter = a[k];
+        const attached = a.slice(k + 1);
+        const name = (program === 'read' && letter === 'a') || ((program === 'printf' || program === 'print') && letter === 'v');
+        if (!name && !values.includes(letter)) continue;
+        const operand = attached !== '' ? attached : (args[++i] ?? '');
+        // R6-1: in zsh most of these letters take no value, so a separate word may be the name (unless a plain number)
+        if (name || (attached === '' && !/^[0-9]+$/.test(operand))) names.push(operand);
+        break;
+      }
+    } else if (program !== 'printf' && program !== 'print') names.push(a);
+  }
+  return names;
+}
+
+/**
+ * True when a part sets a variable whose name the gate can't read (R4-3): `env ${x}L=…`, `export ${x^^}=…`,
+ * `export "$(…)OL=…"`, `read ${x}L`, `printf -v ${x}L`, `mapfile ${x}L`, `getopts o ${x}`, or a nameref
+ * (`declare -n`), whose target is set through another name; or a `read`-family part that sets `GIT_ALLOW_PROTOCOL`
+ * under a name the gate resolved (`x=GIT_ALLOW_PROTOCO; read ${x}L`).
+ */
+function setsUnreadableName(part: CommandPart): boolean {
+  const program = part.program;
+  if (program === null) return false;
+  const unknownName = (w: string): boolean => w.slice(0, w.includes('=') ? w.indexOf('=') : undefined).includes(UNKNOWN);
+  if (part.wrappers.includes('env') && program.includes(UNKNOWN) && program.includes('=')) return true;
+  const args = part.words.slice(1);
+  if (VARIABLE_SETTERS.has(program)) {
+    if (program !== 'export' && program !== 'readonly' && args.some((a) => /^-[A-Za-z]*n/.test(a))) return true;
+    return args.some((a) => !a.startsWith('-') && unknownName(a));
+  }
+  // ship fix round 7, R7-3: zsh `print -v name` (any cluster, `-rv`) sets its name as `printf -v` does
+  if (!(program in VALUE_OPTIONS) && program !== 'printf' && program !== 'print' && program !== 'getopts') return false;
+  return namesSetBy(program, args).some((name) => name.includes(UNKNOWN) || name.replace(/['"\\]/g, '') === 'GIT_ALLOW_PROTOCOL');
+}
+
+/** The refusal for a ref-history key, set any way: fixed text, so no key or value is repeated. */
+const REF_HISTORY_REFUSAL: Refusal = {
+  rule: 'protected-branch',
+  reason: 'Refused: this git setting changes or erases ref history (reflogs), which a lost commit is found by. Ask the user to change it with `!`.',
+};
+
+/** The refusal for an OSS setting, written any way: fixed text, so no key or value is repeated. */
+const OSS_REFUSAL: Refusal = {
+  rule: 'protected-branch',
+  reason: 'Refused: this git call writes an OSS setting (the `oss` config section), which OSS reads to decide what a phase ships. Ask the user to change it with `!`.',
+};
+
+/**
+ * True when a git part sets a key of `keys` through `-c`, `--config-env` or a `GIT_CONFIG_KEY_n` set
+ * for it or earlier in the call.
+ */
+function carriesKey(keys: readonly string[], part: CommandPart, earlier: readonly CommandPart[], count: number): boolean {
+  const git = part.git;
+  if (git === null) return false;
+  const globals = part.words.slice(1, part.words.length - git.args.length - 1);
+  for (let i = 0; i < globals.length; i++) {
+    const w = globals[i];
+    const setting = w === '-c' || w === '--config-env' ? globals[i + 1] : w.startsWith('--config-env=') ? w.slice('--config-env='.length) : undefined;
+    if (setting !== undefined && keyMatches(keys, keyOf(setting))) return true;
+  }
+  return callSettings(part, earlier, count).some(([name, value]) => CONFIG_KEY_VARIABLE.test(name) && keyMatches(keys, value));
 }
 
 function runsRefusal(what: string, where: string): Refusal {
@@ -529,12 +729,23 @@ function plantedConfig(part: CommandPart, earlier: readonly CommandPart[], count
 }
 
 /**
+ * Config keys (git syntax, lowercased, `*` is any text) that stop or expire the ref history a lost
+ * commit is found by, whatever their value (gate-gaps-r3 Task 4): no reflogs, a bare repository
+ * (which keeps none by default), or reflog entries expired early.
+ */
+const REF_HISTORY_KEYS = ['core.logallrefupdates', 'core.bare', 'gc.reflogexpire*', 'gc.*.reflogexpire*'];
+/** OSS's own settings (git syntax, lowercased): any key in the `oss` section (gate-gaps-r3 Task 8). */
+const OSS_KEYS = ['oss.*'];
+/**
  * Config keys (git syntax, lowercased, `*` is any text) that make ordinary git subcommands run a
  * hook folder, a program, or config the agent may have written, whatever their value (fix round 4,
  * K4). `alias.*` hides the real subcommand from every rule; `include.path` pulls in any key;
- * `protocol.allow` / `protocol.ext.allow` let an `ext::` URL run a command.
+ * `protocol.allow` / `protocol.<name>.allow` let an `ext::` URL run a command or a `file://` one read this
+ * machine (ship round 1, S4: every protocol key, not only `ext`).
  */
-const RUN_ANY_KEYS = ['core.hookspath', 'alias.*', 'include.path', 'includeif.*.path', 'protocol.allow', 'protocol.ext.allow'];
+export const RUN_ANY_KEYS = ['core.hookspath', 'alias.*', 'include.path', 'includeif.*.path', 'protocol.allow', 'protocol.*.allow', ...REF_HISTORY_KEYS, ...OSS_KEYS];
+/** Sections whose renaming or removal moves keys a `git config` write may not set (PUSH_KEYS, RUN_ANY_KEYS). */
+const WRITE_SECTIONS = new Set([...PUSH_KEYS, ...RUN_ANY_KEYS].map((key) => key.split('.')[0]));
 /**
  * Config keys whose value is a command git runs (git syntax, lowercased). The pager keys are left
  * out: git starts a pager only when its output is a terminal, which the agent's never is.
@@ -803,6 +1014,8 @@ function runConfig(part: CommandPart, earlier: readonly CommandPart[], count: nu
     if (w !== '-c' || i + 1 >= globals.length) continue;
     const setting = globals[++i];
     const value = setting.includes('=') ? setting.slice(setting.indexOf('=') + 1) : 'true';
+    // S4 follow-up pick "Allow on submodule only": a local-path submodule needs the file protocol
+    if (git.subcommand === 'submodule' && keyOf(setting).toLowerCase() === 'protocol.file.allow') continue;
     if (runsProgram(keyOf(setting), value)) return keyOf(setting);
   }
   const settings = callSettings(part, earlier, count);

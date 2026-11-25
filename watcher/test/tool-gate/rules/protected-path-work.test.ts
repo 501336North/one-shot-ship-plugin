@@ -58,7 +58,10 @@ describe('the work to check a long command\'s paths', () => {
       expect(exitCode).toBe(0);
       // before round 10: about 24,000 clock reads (6 million steps); round 11 (CR LOW-C) counts only
       // the work, not how it is done (path.relative calls were an implementation detail)
-      expect(clockReads).toBeLessThan(2000);
+      // work grows with the protected list, by about 335 reads per protected pattern after a cd the
+      // gate can't resolve; owner picked 3000 on 2026-11-19 (gate-gaps-r3 Task 4), then raised it once
+      // the same day to 5000 to cover the transcript patterns (Task 9) and the replace/grafts patterns (Task 11)
+      expect(clockReads).toBeLessThan(5000);
     });
   }
 });

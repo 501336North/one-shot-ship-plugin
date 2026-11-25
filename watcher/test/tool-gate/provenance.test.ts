@@ -74,6 +74,14 @@ describe('base settings file', () => {
         '~/.oss/ledger/**',
         // R-257 ship round 1, D25 (user pick 2026-11-18): the gate's code location is protected
         '~/.oss/plugin-root', '~/.oss/watcher/**',
+        // gate-gaps-r3 Task 4 (owner pick "Keep all three", 2026-11-19): the reflogs a lost commit is found by,
+        // a worktree's and a submodule's included, and the reftable ref store
+        '**/.git/logs/**', '**/.git/worktrees/*/logs/**', '**/.git/modules/**/logs/**', '**/.git/reftable/**',
+        // Task 9, owner pick 2026-11-19: transcripts and their folders
+        '~/.claude/projects/*/*.jsonl', '~/.claude/projects/*/*/subagents/**', '~/.claude/projects/*/*/tool-results/**',
+        '~/.claude/projects/*/*/subagents', '~/.claude/projects/*/*/tool-results',
+        // Task 11, owner pick 2026-11-19 (R-257 round 5): replace refs and grafts
+        '**/.git/info/grafts', '**/.git/refs/replace/**',
       ],
       productionHosts: [],
       // R-266 DESIGN item 3 (AC-004.6): the review agents whose runs the gate tracks

@@ -16,7 +16,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { runToolGate, type GateResult } from '../../src/tool-gate/gate.js';
+import { runToolGate, type GateDeps, type GateResult } from '../../src/tool-gate/gate.js';
 
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const AGENTS: Array<[string, string | null]> = [['the main agent', null], ['a builder', 'oss:typescript-pro']];
@@ -42,7 +42,7 @@ afterAll(() => {
   fs.rmSync(root, { recursive: true, force: true });
 });
 
-function call(command: string, agent: string | null, platform: NodeJS.Platform): Promise<GateResult> {
+function call(command: string, agent: string | null, platform: NodeJS.Platform, clock?: GateDeps['clock']): Promise<GateResult> {
   return runToolGate(
     {
       mode: 'pre',
@@ -57,7 +57,7 @@ function call(command: string, agent: string | null, platform: NodeJS.Platform):
       env: { HOME: home, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT, CLAUDE_PROJECT_DIR: repo, TMPDIR: os.tmpdir() },
       hookEnv: { PATH: '/usr/bin:/bin', HOME: home },
     },
-    { platform },
+    { platform, clock },
   );
 }
 
@@ -73,6 +73,12 @@ async function refuse(command: string, agent: string | null, platform: NodeJS.Pl
   expect(result.stderr, command).toMatch(/^Refused/);
 }
 
+/** This process's CPU time in milliseconds (user + system): the work done, whatever else the machine runs. */
+function cpuMs(): number {
+  const used = process.cpuUsage();
+  return (used.user + used.system) / 1000;
+}
+
 const HOME_D = 'D=$(cd ~ && pwd); ';
 const TRAP_TMP = "trap 'rm -rf \"$tmp\"' EXIT; ";
 
@@ -85,10 +91,12 @@ function manyNamesWithIfs(): string {
 describe.each(PLATFORMS)('on %s', (platform) => {
   describe.each(AGENTS)('%s', (_who, agent) => {
     it('PERF MEDIUM-1: decides a trap reading ~6,100 names, with IFS mentioned, well inside the time limit (a bound, not a tight timing)', async () => {
-      const started = Date.now();
-      const result = await call(manyNamesWithIfs(), agent, platform);
-      const took = Date.now() - started;
-      // refused as too complex, as before, but not by running out of time (the 2 s deadline)
+      // The gate's 1 s decision deadline and this bound run on this process's CPU time, not the wall
+      // clock, so other work on the machine can't trip them; a decision that does too much work still does.
+      const started = cpuMs();
+      const result = await call(manyNamesWithIfs(), agent, platform, cpuMs);
+      const took = cpuMs() - started;
+      // refused as too complex, as before, but not by running out of time (the decision deadline)
       expect(result.exitCode).toBe(2);
       expect(result.stderr).not.toContain('took too long');
       expect(took).toBeLessThan(1500);

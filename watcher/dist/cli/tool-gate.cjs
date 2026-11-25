@@ -37,12 +37,12 @@ __export(tool_gate_exports, {
   runMain: () => runMain
 });
 module.exports = __toCommonJS(tool_gate_exports);
-var import_node_path30 = __toESM(require("node:path"), 1);
+var import_node_path32 = __toESM(require("node:path"), 1);
 var import_node_worker_threads = require("node:worker_threads");
 
 // src/tool-gate/gate.ts
-var import_node_fs18 = __toESM(require("node:fs"), 1);
-var import_node_path29 = __toESM(require("node:path"), 1);
+var import_node_fs19 = __toESM(require("node:fs"), 1);
+var import_node_path31 = __toESM(require("node:path"), 1);
 
 // src/tool-gate/expansion-scan.ts
 var MAX_INDEX = 256;
@@ -259,8 +259,8 @@ function fillCallVariables(command, home, pluginRoot) {
     if (value !== null && !elsewhere && !known.has(name) && !shellSets(name)) known.set(name, value);
   });
   if (known.size === 0) return command;
-  const filled = fillIn(command.slice(at), known, MAX_OUTPUT - at);
-  return filled === null ? command : command.slice(0, at) + filled;
+  const filled2 = fillIn(command.slice(at), known, MAX_OUTPUT - at);
+  return filled2 === null ? command : command.slice(0, at) + filled2;
 }
 var NEVER_FOLLOWED = /* @__PURE__ */ new Set(["HOME", "PATH", "CDPATH", "cdpath", "IFS", "TMPDIR", "CLAUDE_PLUGIN_ROOT", "ENV", "BASH_ENV"]);
 var HIDDEN_SETTER_WORDS = ["eval", "source", "alias", "nameref", "enable"];
@@ -2041,6 +2041,7 @@ var WRAPPERS = /* @__PURE__ */ new Map([
     writesOperands: true
   }]
 ]);
+var WRAPPER_WORDS = WRAPPERS;
 var SHELLS = /* @__PURE__ */ new Set(["bash", "sh", "zsh", "dash", "ksh"]);
 var SHELL_VALUE_OPTIONS = /* @__PURE__ */ new Set(["-o", "-O", "--rcfile", "--init-file"]);
 var SHORT_OPTION_CLUSTER = /^[-+][A-Za-z0-9]+$/;
@@ -2050,6 +2051,7 @@ var DYNAMIC_SCRIPT = /\$\(|`|\$[A-Za-z_{0-9@*#?!$-]/;
 var MAX_NESTED_DEPTH = 5;
 var MAX_GROUP_DEPTH = 64;
 var MAX_WRAPPERS = 64;
+var MAX_START_READINGS = 64;
 var PIPES = ["|", "|&"];
 var KEYWORDS = /* @__PURE__ */ new Set(["if", "then", "elif", "else", "fi", "do", "done", "while", "until", "!"]);
 var CD_PREFIXES = /* @__PURE__ */ new Set(["command", "builtin", "time", "noglob", "nocorrect", "-"]);
@@ -2124,6 +2126,7 @@ function readCommand(cmd, cwd, home, caseInsensitive = false, toplevel, readFile
     files: /* @__PURE__ */ new Map(),
     scriptCommands: /* @__PURE__ */ new Map(),
     scanned: 0,
+    startReadings: 0,
     cdpath: cdpath === void 0 ? null : compactCdpath(cdpath.split(":")),
     cdpathSetUnseen: cdpathSetUnseen(cmd),
     tmpdirSet: /(^|[^$\w{])TMPDIR\b/.test(cmd),
@@ -2871,39 +2874,39 @@ var OPTION_SETTERS = /* @__PURE__ */ new Map([["printf", "v"], ["print", "v"], [
 var LATER_PREFIXES = /* @__PURE__ */ new Set(["builtin", "noglob", "nocorrect", "-", "exec", "time", "coproc"]);
 var LATER_KEYWORDS = /* @__PURE__ */ new Set([...KEYWORDS, "{", "}", "esac"]);
 var LATER_HEADERS = /* @__PURE__ */ new Set(["[[", "case", "for", "select", "foreach", "function"]);
-function laterChange(filled) {
-  const name = [...filled.names][0] ?? "F";
+function laterChange(filled2) {
+  const name = [...filled2.names][0] ?? "F";
   return new ReadingLimit2(`a later command could change \`$${name}\`; or write the trap with double quotes, e.g. \`trap "rm -rf $${name}" EXIT\``);
 }
 function writtenOut(word) {
   return !word.value.includes(UNKNOWN) && (word.raw === null || !/[$`]/.test(word.raw));
 }
-function reachesFilled(name, filled) {
-  return filled.names.has(name) || name === "IFS" && filled.splits || name === "argv" && filled.positional || name === ZSH_FUNCTIONS || name === "dis_functions";
+function reachesFilled(name, filled2) {
+  return filled2.names.has(name) || name === "IFS" && filled2.splits || name === "argv" && filled2.positional || name === ZSH_FUNCTIONS || name === "dis_functions";
 }
-function setsRisky(word, filled, afterEquals = false) {
+function setsRisky(word, filled2, afterEquals = false) {
   if (word === void 0) return false;
   if (!writtenOut(word)) return true;
   const text = afterEquals ? word.value.slice(word.value.lastIndexOf("=") + 1) : word.value;
   const name = /^[A-Za-z_][A-Za-z0-9_]*/.exec(text)?.[0];
-  return name !== void 0 && reachesFilled(name, filled);
+  return name !== void 0 && reachesFilled(name, filled2);
 }
-function assignmentRisky(word, filled) {
+function assignmentRisky(word, filled2) {
   const assignment = assignmentOf(word);
-  if (assignment === null || !reachesFilled(assignment.name, filled)) return false;
-  return !(filled.settled.has(assignment.name) && assignment.index === null && !assignment.append);
+  if (assignment === null || !reachesFilled(assignment.name, filled2)) return false;
+  return !(filled2.settled.has(assignment.name) && assignment.index === null && !assignment.append);
 }
 var ARITHMETIC_ASSIGNED = /([A-Za-z_][A-Za-z0-9_]*)\s*(?:\*\*|<<|>>|[-+*/%&|^])?=(?!=)|(?:\+\+|--)\s*([A-Za-z_][A-Za-z0-9_]*)|([A-Za-z_][A-Za-z0-9_]*)\s*(?:\+\+|--)/g;
-function arithmeticRisky(inside3, filled) {
+function arithmeticRisky(inside3, filled2) {
   if (/[$`]/.test(inside3) || inside3.includes(UNKNOWN)) return true;
-  return [...inside3.matchAll(ARITHMETIC_ASSIGNED)].some((m) => reachesFilled(m[1] ?? m[2] ?? m[3], filled));
+  return [...inside3.matchAll(ARITHMETIC_ASSIGNED)].some((m) => reachesFilled(m[1] ?? m[2] ?? m[3], filled2));
 }
 var ARITHMETIC_START = /\(\(|\$\[|[A-Za-z0-9_}]\[/g;
 var LOOP_NAME = /(?:^|[\s;&|(){}])(?:for|select|foreach)\s+([A-Za-z_][A-Za-z0-9_]*|[$`"'])/g;
-function laterTextRisky(text, filled) {
+function laterTextRisky(text, filled2) {
   if (text.length > MAX_LATER_TEXT) throw new ReadingLimit2(`more than ${MAX_LATER_TEXT / 1024} KB after a trap with a variable filled in`);
   if (parameterRisky(text)) return true;
-  for (const [, name] of text.matchAll(LOOP_NAME)) if (!/^[A-Za-z_]/.test(name) || reachesFilled(name, filled)) return true;
+  for (const [, name] of text.matchAll(LOOP_NAME)) if (!/^[A-Za-z_]/.test(name) || reachesFilled(name, filled2)) return true;
   const closes = matchingCloses(text);
   let readTo = -1;
   for (const m of text.matchAll(ARITHMETIC_START)) {
@@ -2911,7 +2914,7 @@ function laterTextRisky(text, filled) {
     const open = m.index + m[0].length - 1;
     if (open < readTo) continue;
     readTo = closes[open];
-    if (arithmeticRisky(text.slice(open + 1, readTo), filled)) return true;
+    if (arithmeticRisky(text.slice(open + 1, readTo), filled2)) return true;
     if (readTo === text.length) break;
   }
   return false;
@@ -2957,55 +2960,55 @@ function matchingCloses(text) {
   return closes;
 }
 var NAME_OPTION_LETTERS = /* @__PURE__ */ new Map([["read", "aA"], ["zparseopts", "aAF"], ["compgen", "V"]]);
-function nameSetterRisky(name, args, filled) {
+function nameSetterRisky(name, args, filled2) {
   const letters = NAME_OPTION_LETTERS.get(name) ?? "";
   return args.some((a, n) => {
-    if (!/^[-+]/.test(a.value)) return setsRisky(a, filled, name === "zparseopts");
+    if (!/^[-+]/.test(a.value)) return setsRisky(a, filled2, name === "zparseopts");
     if (!writtenOut(a)) return true;
     const at = [...a.value.slice(1)].findIndex((c) => letters.includes(c));
     if (at === -1) return false;
     const value = a.value.slice(at + 2);
-    return value === "" ? setsRisky(args[n + 1], filled) : setsRisky({ value, raw: null }, filled);
+    return value === "" ? setsRisky(args[n + 1], filled2) : setsRisky({ value, raw: null }, filled2);
   });
 }
-function setRisky(args, filled) {
+function setRisky(args, filled2) {
   for (let i = 0; i < args.length; i++) {
     const a = args[i].value;
     if (a.includes(UNKNOWN)) return true;
-    if (a === "--" || !/^[-+]/.test(a)) return filled.positional;
-    if (/^[-+][A-Za-z]*A/.test(a)) return setsRisky(args[i + 1], filled);
+    if (a === "--" || !/^[-+]/.test(a)) return filled2.positional;
+    if (/^[-+][A-Za-z]*A/.test(a)) return setsRisky(args[i + 1], filled2);
     if (/o$/.test(a)) i++;
   }
   return false;
 }
-function declarationRisky(args, filled) {
+function declarationRisky(args, filled2) {
   return args.some((word) => {
     if (/^[-+]/.test(word.value)) return word.value.includes(UNKNOWN) || word.value.slice(1).includes("n");
     const name = /^[A-Za-z_][A-Za-z0-9_]*(?=$|\+?=|\[)/.exec(word.raw ?? word.value)?.[0];
-    return name === void 0 || reachesFilled(name, filled);
+    return name === void 0 || reachesFilled(name, filled2);
   });
 }
-function optionSetterRisky(args, letter, filled) {
+function optionSetterRisky(args, letter, filled2) {
   for (let i = 0; i < args.length; i++) {
     const a = args[i].value;
     if (a.includes(UNKNOWN)) return true;
     if (a === "--" || !/^-[A-Za-z]+$/.test(a)) return false;
     const at = a.indexOf(letter);
     if (at === -1) continue;
-    return at === a.length - 1 ? setsRisky(args[i + 1], filled) : setsRisky({ value: a.slice(at + 1), raw: null }, filled);
+    return at === a.length - 1 ? setsRisky(args[i + 1], filled2) : setsRisky({ value: a.slice(at + 1), raw: null }, filled2);
   }
   return false;
 }
 var WHOLE_VARIABLE = /^("?)\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))\1$/;
-function waitRisky(args, filled) {
+function waitRisky(args, filled2) {
   const operand = (a) => {
     const whole = WHOLE_VARIABLE.exec(a.raw ?? "");
-    return whole !== null && filled.plainOperands.has(whole[2] ?? whole[3]);
+    return whole !== null && filled2.plainOperands.has(whole[2] ?? whole[3]);
   };
-  if (args.some((a) => a.value.startsWith("-"))) return optionSetterRisky(args, "p", filled);
+  if (args.some((a) => a.value.startsWith("-"))) return optionSetterRisky(args, "p", filled2);
   return args.some((a) => a.value.includes(UNKNOWN) && !operand(a));
 }
-function commandRisky(words, filled, home, depth) {
+function commandRisky(words, filled2, home, depth) {
   let i = 0;
   const assigned = [];
   for (; ; ) {
@@ -3013,7 +3016,7 @@ function commandRisky(words, filled, home, depth) {
     if (LATER_HEADERS.has(words[i]?.value ?? "")) return false;
     if (words[i]?.value === "repeat") i += 2;
     for (; i < words.length && ASSIGNMENT2.test(words[i].value); i++) {
-      if (assignmentRisky(words[i].value, filled)) return true;
+      if (assignmentRisky(words[i].value, filled2)) return true;
       assigned.push(words[i].value);
     }
     const w = words[i]?.value;
@@ -3038,42 +3041,42 @@ function commandRisky(words, filled, home, depth) {
   const name = first.value;
   if (name.includes(UNKNOWN)) return true;
   if (HIDDEN_RUNNERS.has(name)) return true;
-  if (DECLARING_BUILTINS.has(name)) return declarationRisky(args, filled);
-  if (NAME_SETTERS.has(name)) return nameSetterRisky(name, args, filled);
-  if (name === "wait") return waitRisky(args, filled);
+  if (DECLARING_BUILTINS.has(name)) return declarationRisky(args, filled2);
+  if (NAME_SETTERS.has(name)) return nameSetterRisky(name, args, filled2);
+  if (name === "wait") return waitRisky(args, filled2);
   const letter = OPTION_SETTERS.get(name);
-  if (letter !== void 0) return optionSetterRisky(args, letter, filled);
-  if (name === "getopts") return setsRisky(args[args[0]?.value === "--" ? 2 : 1], filled);
-  if (name === "let") return args.some((a) => !writtenOut(a) || arithmeticRisky(a.value, filled));
-  if (name === "set") return setRisky(args, filled);
+  if (letter !== void 0) return optionSetterRisky(args, letter, filled2);
+  if (name === "getopts") return setsRisky(args[args[0]?.value === "--" ? 2 : 1], filled2);
+  if (name === "let") return args.some((a) => !writtenOut(a) || arithmeticRisky(a.value, filled2));
+  if (name === "set") return setRisky(args, filled2);
   const values = args.map((a) => a.value);
   const script = name === "trap" ? trapScript(values) : name === "sched" ? schedScript(values) : name === "emulate" ? emulateMode(values).script : null;
-  return script !== null && laterScriptRisky(script, filled, home, depth + 1);
+  return script !== null && laterScriptRisky(script, filled2, home, depth + 1);
 }
-function laterTokensRisky(tokens, text, filled, home, depth) {
+function laterTokensRisky(tokens, text, filled2, home, depth) {
   if (depth > MAX_NESTED_DEPTH) throw new ReadingLimit2(`scripts nested deeper than ${MAX_NESTED_DEPTH}`);
   let words = [];
   for (const token of tokens) {
     if (token.kind === "op") {
-      if (commandRisky(words, filled, home, depth)) return true;
+      if (commandRisky(words, filled2, home, depth)) return true;
       words = [];
       continue;
     }
-    if (token.scripts?.some((script) => laterTokensRisky(script, null, filled, home, depth + 1))) return true;
+    if (token.scripts?.some((script) => laterTokensRisky(script, null, filled2, home, depth + 1))) return true;
     const at = sourceOf(token);
     if (token.kind === "word") words.push({ value: token.value, raw: text !== null && at !== void 0 ? text.slice(at.start, at.end) : null });
   }
-  return commandRisky(words, filled, home, depth);
+  return commandRisky(words, filled2, home, depth);
 }
-function laterScriptRisky(script, filled, home, depth) {
+function laterScriptRisky(script, filled2, home, depth) {
   const text = script.split(UNKNOWN).join("$_oss_unknown_");
-  if (laterTextRisky(text, filled)) return true;
+  if (laterTextRisky(text, filled2)) return true;
   const result = tokenize(text, home);
   if ("unreadable" in result) {
     if (result.limit) throw new ReadingLimit2(result.reason);
     return true;
   }
-  return laterTokensRisky(result.tokens, text, filled, home, depth);
+  return laterTokensRisky(result.tokens, text, filled2, home, depth);
 }
 function readsUnquoted(script, names) {
   const read = unquotedReads(script);
@@ -3143,7 +3146,7 @@ function split(tokens, cwd, home, toplevel = null, dots = false, startCdpath = n
   let functionDefined = false;
   let envClean = true;
   let filledAfter = -1;
-  const filled = { names: /* @__PURE__ */ new Set(), positional: false, splits: false, settled: /* @__PURE__ */ new Set(), plainOperands: /* @__PURE__ */ new Set() };
+  const filled2 = { names: /* @__PURE__ */ new Set(), positional: false, splits: false, settled: /* @__PURE__ */ new Set(), plainOperands: /* @__PURE__ */ new Set() };
   let segmentStart = -1;
   let segmentEnd = -1;
   let bodyNext = false;
@@ -3313,16 +3316,16 @@ function split(tokens, cwd, home, toplevel = null, dots = false, startCdpath = n
     }
     if (watched.size === 0) return script;
     if (filledAfter === -1) filledAfter = after;
-    for (const name of watched.keys()) filled.names.add(name);
+    for (const name of watched.keys()) filled2.names.add(name);
     for (const [name, plain] of settled) {
-      filled.settled.add(name);
-      if (plain.every((v) => !v.startsWith("-"))) filled.plainOperands.add(name);
+      filled2.settled.add(name);
+      if (plain.every((v) => !v.startsWith("-"))) filled2.plainOperands.add(name);
     }
-    filled.positional ||= POSITIONAL.test(script);
-    filled.splits ||= readsUnquoted(script, watched);
-    if (laterScriptRisky(script, filled, home, 1)) throw laterChange(filled);
+    filled2.positional ||= POSITIONAL.test(script);
+    filled2.splits ||= readsUnquoted(script, watched);
+    if (laterScriptRisky(script, filled2, home, 1)) throw laterChange(filled2);
     const read = values.size === 0 ? script : unknown ? script + UNKNOWN : filledReferences(script, values) ?? script + UNKNOWN;
-    return withSettledValues(script, read, values, settled, unknown, filled);
+    return withSettledValues(script, read, values, settled, unknown, filled2);
   };
   const withSettledValues = (script, read, values, settled, unknown, seen) => {
     let combinations = [new Map(values)];
@@ -3387,7 +3390,7 @@ ${copy}
         const at = wordTokens[n] === void 0 ? void 0 : sourceOf(wordTokens[n]);
         return { value, raw: at === void 0 ? null : text.slice(at.start, at.end) };
       });
-      if (commandRisky(later2, filled, home, 0) || scripts.some((script) => laterTokensRisky(script, null, filled, home, 1))) throw laterChange(filled);
+      if (commandRisky(later2, filled2, home, 0) || scripts.some((script) => laterTokensRisky(script, null, filled2, home, 1))) throw laterChange(filled2);
     }
     if (text !== null && !quietTrap && !harmlessCommand(commandWords, wordTokens[assigned.length], text, segmentStart, segmentEnd, globs)) {
       known.clear();
@@ -3610,7 +3613,7 @@ ${copy}
     }
   }
   close(null);
-  if (text !== null && filledAfter !== -1 && laterTextRisky(text.slice(filledAfter), filled)) throw laterChange(filled);
+  if (text !== null && filledAfter !== -1 && laterTextRisky(text.slice(filledAfter), filled2)) throw laterChange(filled2);
   return segments;
 }
 function toParts(segment, segments, reading, depth) {
@@ -3699,7 +3702,8 @@ function ownParts(segment, segments, reading, depth) {
     ...functionParts(bodies, part, reading, depth),
     ...settingParts(part, reading, depth),
     ...scriptCommandParts(scriptFacts, part, reading, depth),
-    ...alternateParts(alternates, segment, segments, part, reading, depth)
+    ...alternateParts(alternates, segment, segments, part, reading, depth),
+    ...startParts(startReadings(words, reading), segment, segments, part, reading, depth)
   ];
   for (const target of part.writeTargets) reading.written.add(import_node_path3.default.resolve(target));
   const script = scriptOf(name, program === null ? null : import_node_path3.default.posix.basename(program), args) ?? stdinShellScript(name, args, part.stdinScripts) ?? expectSpawns(name, args, cwd, reading, stdinFed(segment));
@@ -3788,6 +3792,84 @@ function alternateParts(alternates, segment, segments, part, reading, depth) {
       terminal: true
     }))
   );
+}
+function shiftedMarks(marked, offset) {
+  return { words: new Set([...marked.words].flatMap((n) => n >= offset ? [n - offset] : [])), redirects: marked.redirects };
+}
+function startParts(starts, segment, segments, part, reading, depth) {
+  if (starts.length === 0) return [];
+  if (depth >= MAX_NESTED_DEPTH) throw new ReadingLimit2(`scripts nested deeper than ${MAX_NESTED_DEPTH}`);
+  return starts.flatMap((start) => {
+    const leading = start.words.findIndex((w) => !ASSIGNMENT2.test(w));
+    if (leading === -1) return [];
+    const words = start.words.slice(leading);
+    const settings = [...start.settings, ...start.words.slice(0, leading)];
+    const offset = segment.words.length - words.length;
+    const suffix = offset >= 0 && words.every((w, n) => segment.words[offset + n] === w);
+    const marks = suffix ? { substituted: shiftedMarks(segment.substituted, offset), unknown: shiftedMarks(segment.unknown, offset), wordTokens: segment.wordTokens.slice(offset) } : { wordTokens: [] };
+    return ownParts({ ...segment, ...marks, words, assignments: assignedNames(settings), assignmentValues: assignedValues(settings), scripts: [] }, segments, reading, depth + 1).map((p) => ({
+      ...p,
+      assignments: [...part.assignments, ...p.assignments],
+      runBy: part.program ?? void 0
+    }));
+  });
+}
+function runsArchOrLaunchctl(word) {
+  const base = import_node_path3.default.posix.basename(word).toLowerCase();
+  if (base === "arch" || base === "launchctl") return true;
+  if (!/[?*[]/.test(base)) return false;
+  if (base.includes("[") && base.lastIndexOf("]") > base.indexOf("[") + 1) return true;
+  return globMayMatch(base, "arch") || globMayMatch(base, "launchctl");
+}
+function globMayMatch(glob, name) {
+  let at = name.split("").map(() => false).concat(false);
+  at[0] = true;
+  for (let i = 0; i < glob.length; i++) {
+    const c = glob[i];
+    const next = at.map(() => false);
+    if (c === "*") {
+      let seen = false;
+      for (let k = 0; k <= name.length; k++) next[k] = seen ||= at[k];
+    } else {
+      let test = (letter) => letter === c;
+      if (c === "?") test = () => true;
+      else if (c === "[") {
+        const close = glob.indexOf("]", i + 2);
+        if (close !== -1) {
+          const inner = glob.slice(i + 1, close);
+          const negate = inner.startsWith("!") || inner.startsWith("^");
+          const set = negate ? inner.slice(1) : inner;
+          test = (letter) => inClass(set, letter) !== negate;
+          i = close;
+        }
+      }
+      for (let k = 0; k < name.length; k++) if (at[k] && test(name[k])) next[k + 1] = true;
+    }
+    at = next;
+  }
+  return at[name.length];
+}
+function inClass(set, letter) {
+  for (let i = 0; i < set.length; i++) {
+    if (set[i + 1] === "-" && i + 2 < set.length) {
+      if (letter >= set[i] && letter <= set[i + 2]) return true;
+      i += 2;
+    } else if (set[i] === letter) return true;
+  }
+  return false;
+}
+function startReadings(words, reading) {
+  if (words.length === 0 || !runsArchOrLaunchctl(words[0])) return [];
+  const starts = [];
+  const settings = [];
+  for (let i = 1; i < words.length; i++) {
+    if (!words[i].startsWith("-") || words[i - 1] === "--") starts.push({ words: words.slice(i), settings: [...settings] });
+    const value = words[i] === "-e" ? words[i + 1] : words[i].startsWith("-e") ? words[i].slice(2) : void 0;
+    if (value !== void 0 && ASSIGNMENT2.test(value)) settings.push(value);
+  }
+  reading.startReadings += starts.length;
+  if (reading.startReadings > MAX_START_READINGS) throw new ReadingLimit2(`more than ${MAX_START_READINGS} commands read after arch or launchctl`);
+  return starts;
 }
 var EXPECT_WAITS = /* @__PURE__ */ new Map([["expect", 1], ["send", 1], ["exit", 1], ["interact", 0], ["wait", 0], ["close", 0]]);
 function expectSpawns(name, args, cwd, reading, stdinFed2) {
@@ -4902,6 +4984,13 @@ function gitReaderFor(projectRoot, gitBin) {
   };
 }
 var realGitReader = gitReaderFor(null);
+function ignoredPaths(top, paths, timeoutMs) {
+  const bin = checkedGit();
+  if (bin === null) return null;
+  const run = (0, import_node_child_process2.spawnSync)(bin, [...HARDENING, "check-ignore", "--", ...paths], { cwd: top, env: gitEnv(), encoding: "utf8", timeout: timeoutMs, stdio: ["ignore", "pipe", "ignore"] });
+  if (run.status !== 0 && run.status !== 1) return null;
+  return run.stdout.split("\n").filter((line) => line !== "");
+}
 
 // src/tool-gate/path-resolver.ts
 var import_node_fs3 = __toESM(require("node:fs"), 1);
@@ -5101,11 +5190,11 @@ function repoTrust(dir) {
 }
 
 // src/tool-gate/recorder.ts
-var import_node_path10 = __toESM(require("node:path"), 1);
+var import_node_path11 = __toESM(require("node:path"), 1);
 
 // src/tool-gate/state-store.ts
-var import_node_fs7 = __toESM(require("node:fs"), 1);
-var import_node_path8 = __toESM(require("node:path"), 1);
+var import_node_fs8 = __toESM(require("node:fs"), 1);
+var import_node_path9 = __toESM(require("node:path"), 1);
 
 // src/gate-run/run-store.ts
 var import_node_fs6 = __toESM(require("node:fs"), 1);
@@ -5224,10 +5313,40 @@ function reviewedReposFor(home, sessionId) {
   }
 }
 
+// src/tool-gate/local-exclude.ts
+var import_node_fs7 = __toESM(require("node:fs"), 1);
+var import_node_path8 = __toESM(require("node:path"), 1);
+var OSS_STATE = [import_node_path8.default.posix.join(".oss", "tool-gates") + "/", import_node_path8.default.posix.join(".oss", "workflow-state.json")];
+var MAX_EXCLUDE_BYTES = 1024 * 1024;
+var CHECK_IGNORE_MS = 300;
+var alreadyIgnored = /* @__PURE__ */ new Set();
+function excludeOssState(projectRoot) {
+  const repo = findRepo(projectRoot);
+  if (repo.kind !== "repo") return;
+  const info = import_node_path8.default.join(repo.commonDir, "info");
+  if (!import_node_fs7.default.lstatSync(info).isDirectory() || import_node_fs7.default.realpathSync(info) !== import_node_path8.default.join(import_node_fs7.default.realpathSync(repo.commonDir), "info")) return;
+  const file = import_node_path8.default.join(info, "exclude");
+  const read = readRegularFile(file, MAX_EXCLUDE_BYTES, true);
+  if (read === "not-regular") return;
+  const text = read === "missing" ? "" : read.text;
+  const listed = new Set(text.split("\n"));
+  const missing2 = OSS_STATE.filter((line) => !listed.has(line));
+  if (missing2.length === 0 || alreadyIgnored.has(repo.top)) return;
+  const ignored = ignoredPaths(repo.top, missing2, timeLeft(CHECK_IGNORE_MS));
+  if (ignored === null) return;
+  const added = missing2.filter((line) => !ignored.includes(line));
+  if (added.length === 0) {
+    alreadyIgnored.add(repo.top);
+    return;
+  }
+  appendPrivateFile(file, (text === "" || text.endsWith("\n") ? "" : "\n") + added.map((line) => `${line}
+`).join(""));
+}
+
 // src/tool-gate/state-store.ts
 var LOGGABLE_PROGRAM = /^[A-Za-z0-9._+-]{1,64}$/;
 function programField(program) {
-  const name = import_node_path8.default.basename(program ?? "");
+  const name = import_node_path9.default.basename(program ?? "");
   return LOGGABLE_PROGRAM.test(name) ? { program: name } : {};
 }
 var MAX_CYCLE_BYTES = 1024 * 1024;
@@ -5237,24 +5356,28 @@ function isCycleRecord(value) {
   return (v.startedAt === null || typeof v.startedAt === "string") && (v.lastResult === "red" || v.lastResult === "green") && Array.isArray(v.files) && v.files.every((f) => typeof f === "string") && (v.adoptedCommand === null || typeof v.adoptedCommand === "string");
 }
 function fileStateStore(repoRoot) {
-  const ossDir = import_node_path8.default.join(repoRoot, ".oss");
-  const stateDir = import_node_path8.default.join(ossDir, "tool-gates");
-  const cycleFile = import_node_path8.default.join(stateDir, "cycle.json");
-  const eventsFile = import_node_path8.default.join(stateDir, "events.ndjson");
-  const { O_CREAT, O_EXCL, O_NOFOLLOW, O_WRONLY } = import_node_fs7.default.constants;
+  const ossDir = import_node_path9.default.join(repoRoot, ".oss");
+  const stateDir = import_node_path9.default.join(ossDir, "tool-gates");
+  const cycleFile = import_node_path9.default.join(stateDir, "cycle.json");
+  const eventsFile = import_node_path9.default.join(stateDir, "events.ndjson");
+  const { O_CREAT, O_EXCL, O_NOFOLLOW, O_WRONLY } = import_node_fs8.default.constants;
   function refuseSymlinkedDirs() {
     for (const dir of [ossDir, stateDir]) {
-      if (import_node_fs7.default.lstatSync(dir, { throwIfNoEntry: false })?.isSymbolicLink()) {
+      if (import_node_fs8.default.lstatSync(dir, { throwIfNoEntry: false })?.isSymbolicLink()) {
         throw new Error(`tool-gate state: ${dir} is a symlink`);
       }
     }
   }
   function safeStateDir() {
     refuseSymlinkedDirs();
-    import_node_fs7.default.mkdirSync(stateDir, { recursive: true });
-    const real = import_node_fs7.default.realpathSync(stateDir);
-    if (!real.startsWith(import_node_fs7.default.realpathSync(repoRoot) + import_node_path8.default.sep)) {
+    import_node_fs8.default.mkdirSync(stateDir, { recursive: true });
+    const real = import_node_fs8.default.realpathSync(stateDir);
+    if (!real.startsWith(import_node_fs8.default.realpathSync(repoRoot) + import_node_path9.default.sep)) {
       throw new Error(`tool-gate state: ${stateDir} resolves outside the repo`);
+    }
+    try {
+      excludeOssState(repoRoot);
+    } catch {
     }
   }
   return {
@@ -5272,13 +5395,13 @@ function fileStateStore(repoRoot) {
     writeCycle(cycle) {
       safeStateDir();
       const temp = `${cycleFile}.${process.pid}.tmp`;
-      const fd = import_node_fs7.default.openSync(temp, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW);
+      const fd = import_node_fs8.default.openSync(temp, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW);
       try {
-        import_node_fs7.default.writeFileSync(fd, JSON.stringify(cycle));
+        import_node_fs8.default.writeFileSync(fd, JSON.stringify(cycle));
       } finally {
-        import_node_fs7.default.closeSync(fd);
+        import_node_fs8.default.closeSync(fd);
       }
-      import_node_fs7.default.renameSync(temp, cycleFile);
+      import_node_fs8.default.renameSync(temp, cycleFile);
     },
     appendEvent(event) {
       safeStateDir();
@@ -5288,20 +5411,20 @@ function fileStateStore(repoRoot) {
 }
 
 // src/tool-gate/workflow-state.ts
-var import_node_path9 = __toESM(require("node:path"), 1);
+var import_node_path10 = __toESM(require("node:path"), 1);
 var BUILD_COMMAND = "build";
 var MAX_STATE_BYTES = 1024 * 1024;
 function fileWorkflowState(projectDir) {
   return {
     read() {
-      const read = readRegularFile(import_node_path9.default.join(projectDir, ".oss", "workflow-state.json"), MAX_STATE_BYTES, true);
+      const read = readRegularFile(import_node_path10.default.join(projectDir, ".oss", "workflow-state.json"), MAX_STATE_BYTES, true);
       if (read === "missing") return null;
       if (read === "not-regular") throw new Error("workflow state is not a regular file under 1 MB");
       const data = JSON.parse(read.text);
-      const record2 = typeof data === "object" && data !== null ? data : {};
+      const record3 = typeof data === "object" && data !== null ? data : {};
       return {
-        currentCommand: typeof record2.currentCommand === "string" ? record2.currentCommand : null,
-        currentCommandStartedAt: typeof record2.currentCommandStartedAt === "string" ? record2.currentCommandStartedAt : null
+        currentCommand: typeof record3.currentCommand === "string" ? record3.currentCommand : null,
+        currentCommandStartedAt: typeof record3.currentCommandStartedAt === "string" ? record3.currentCommandStartedAt : null
       };
     }
   };
@@ -5313,7 +5436,7 @@ var TEST_WORDS = /* @__PURE__ */ new Set(["test", "tests", "spec", "specs", "che
 var NEVER_ADOPTED = /* @__PURE__ */ new Set(["test", "[", "[[", "grep", "egrep", "fgrep", "rg", "git", "find", "echo", "printf", "ls", "cat"]);
 function isTestLike(part, settings, root, home) {
   return part.words.some(
-    (word) => word.toLowerCase().split(/[^a-z0-9]+/).some((piece) => TEST_WORDS.has(piece)) || matchAnyPath(settings.testFilePatterns, import_node_path10.default.resolve(part.cwd, word), { home, root })
+    (word) => word.toLowerCase().split(/[^a-z0-9]+/).some((piece) => TEST_WORDS.has(piece)) || matchAnyPath(settings.testFilePatterns, import_node_path11.default.resolve(part.cwd, word), { home, root })
   );
 }
 var MAX_ADOPTED_LENGTH = 512;
@@ -5342,7 +5465,7 @@ function recordTestRun(call, ctx) {
   const failedWithExitCode = call.hookEvent === "PostToolUseFailure" && EXIT_CODE.test(call.error ?? "");
   let adoptedCommand = thisBuild.adoptedCommand;
   if (testParts.length === 0) {
-    if (ctx.currentCommand !== BUILD_COMMAND || thisBuild.adoptedCommand !== null || !failedWithExitCode || call.isInterrupt === true || last === void 0 || NEVER_ADOPTED.has(import_node_path10.default.basename(last.program ?? "")) || facts.parts.some((part) => part.pipedOut || part.orTrue) || !isTestLike(last, ctx.settings, ctx.root ?? call.cwd, ctx.home)) {
+    if (ctx.currentCommand !== BUILD_COMMAND || thisBuild.adoptedCommand !== null || !failedWithExitCode || call.isInterrupt === true || last === void 0 || NEVER_ADOPTED.has(import_node_path11.default.basename(last.program ?? "")) || facts.parts.some((part) => part.pipedOut || part.orTrue) || !isTestLike(last, ctx.settings, ctx.root ?? call.cwd, ctx.home)) {
       return;
     }
     adoptedCommand = adoptedPattern(last.words);
@@ -5361,10 +5484,10 @@ function recordTestRun(call, ctx) {
 }
 
 // src/tool-gate/tree-finder.ts
-var import_node_fs8 = __toESM(require("node:fs"), 1);
-var import_node_path11 = __toESM(require("node:path"), 1);
+var import_node_fs9 = __toESM(require("node:fs"), 1);
+var import_node_path12 = __toESM(require("node:path"), 1);
 function* readEntries(dir) {
-  const handle = import_node_fs8.default.opendirSync(dir);
+  const handle = import_node_fs9.default.opendirSync(dir);
   try {
     for (let entry = handle.readSync(); entry !== null; entry = handle.readSync()) yield entry;
   } finally {
@@ -5403,7 +5526,7 @@ function createTreeFinder(limits = { maxDirs: Infinity }, readdir = readEntries,
       const todo = [dir];
       for (let next = todo.pop(); next !== void 0; next = todo.pop()) {
         for (const entry of entriesOf(next)) {
-          const full = import_node_path11.default.join(next, entry.name);
+          const full = import_node_path12.default.join(next, entry.name);
           if (wanted(entry.name)) found2.push(full);
           else if (entry.isDirectory()) todo.push(full);
         }
@@ -5414,7 +5537,7 @@ function createTreeFinder(limits = { maxDirs: Infinity }, readdir = readEntries,
 }
 
 // src/tool-gate/rule-file.ts
-var import_node_path12 = __toESM(require("node:path"), 1);
+var import_node_path13 = __toESM(require("node:path"), 1);
 var PLUGIN_ONLY_KEYS = ["backgroundAgents", "reviewPrograms", "reviewWriteOptions", "reviewNpxPackages"];
 var LIST_KEYS = [
   "protectedBranches",
@@ -5438,32 +5561,32 @@ function parse(text, requireAll) {
   if (typeof data !== "object" || data === null || Array.isArray(data)) {
     return { ok: false, reason: "not a JSON object" };
   }
-  const record2 = data;
-  const keys = Object.keys(record2);
+  const record3 = data;
+  const keys = Object.keys(record3);
   if (keys.some((key2) => !KNOWN_KEYS.has(key2))) return { ok: false, reason: "has an unknown key" };
-  if (record2.version !== 1) return { ok: false, reason: "version must be 1" };
+  if (record3.version !== 1) return { ok: false, reason: "version must be 1" };
   const value = { version: 1 };
-  if ("tagsAllowed" in record2) {
-    if (typeof record2.tagsAllowed !== "boolean") return { ok: false, reason: "tagsAllowed must be true or false" };
-    value.tagsAllowed = record2.tagsAllowed;
+  if ("tagsAllowed" in record3) {
+    if (typeof record3.tagsAllowed !== "boolean") return { ok: false, reason: "tagsAllowed must be true or false" };
+    value.tagsAllowed = record3.tagsAllowed;
   } else if (requireAll) {
     return { ok: false, reason: "tagsAllowed is missing" };
   }
   for (const key2 of PLUGIN_ONLY_KEYS) {
-    if (!(key2 in record2)) continue;
+    if (!(key2 in record3)) continue;
     if (!requireAll) return { ok: false, reason: `${key2} is set by the plugin only` };
-    const list = record2[key2];
+    const list = record3[key2];
     if (!Array.isArray(list) || !list.every((item) => typeof item === "string" && item.length > 0)) {
       return { ok: false, reason: `${key2} must be a list of non-empty strings` };
     }
     value[key2] = list;
   }
   for (const key2 of LIST_KEYS) {
-    if (!(key2 in record2)) {
+    if (!(key2 in record3)) {
       if (requireAll) return { ok: false, reason: `${key2} is missing` };
       continue;
     }
-    const list = record2[key2];
+    const list = record3[key2];
     if (!Array.isArray(list) || !list.every((item) => typeof item === "string" && item.length > 0)) {
       return { ok: false, reason: `${key2} must be a list of non-empty strings` };
     }
@@ -5490,8 +5613,8 @@ function merge(base, repo) {
   return merged;
 }
 function loadSettings(readFile, pluginRoot, repoRoot) {
-  if (!import_node_path12.default.isAbsolute(pluginRoot)) throw new Error("tool-gate plugin root is not an absolute path");
-  const baseText = readFile(import_node_path12.default.join(pluginRoot, "config", "tool-gates.json"));
+  if (!import_node_path13.default.isAbsolute(pluginRoot)) throw new Error("tool-gate plugin root is not an absolute path");
+  const baseText = readFile(import_node_path13.default.join(pluginRoot, "config", "tool-gates.json"));
   if (baseText === null) throw new Error("tool-gate base settings file is missing");
   const baseParsed = parse(baseText, true);
   if (!baseParsed.ok) throw new Error(`tool-gate base settings file is invalid: ${baseParsed.reason}`);
@@ -5502,7 +5625,7 @@ function loadSettings(readFile, pluginRoot, repoRoot) {
   });
   let repoText;
   try {
-    repoText = readFile(import_node_path12.default.join(repoRoot, ".oss", "tool-gates.json"));
+    repoText = readFile(import_node_path13.default.join(repoRoot, ".oss", "tool-gates.json"));
   } catch {
     return reject("not a regular file under 1 MB");
   }
@@ -5532,17 +5655,17 @@ function withUserReviewPrograms(settings, userConfigText2) {
 }
 
 // src/tool-gate/calling-agent.ts
-function callingAgentOf(record2) {
-  const name = record2.agent_type;
+function callingAgentOf(record3) {
+  const name = record3.agent_type;
   return typeof name === "string" && name !== "" ? name : void 0;
 }
 
 // src/utils/gate-agents.ts
-var path13 = __toESM(require("path"), 1);
+var path14 = __toESM(require("path"), 1);
 
 // src/utils/regular-file.ts
-var fs9 = __toESM(require("fs"), 1);
-var FLAGS2 = fs9.constants.O_RDONLY | fs9.constants.O_NONBLOCK;
+var fs10 = __toESM(require("fs"), 1);
+var FLAGS2 = fs10.constants.O_RDONLY | fs10.constants.O_NONBLOCK;
 function notRegular(file) {
   return Object.assign(new Error(`ENOENT: not a regular file, open '${file}'`), { code: "ENOENT" });
 }
@@ -5550,17 +5673,17 @@ function refused(st, owner) {
   return !st.isFile() || owner !== void 0 && st.uid !== owner;
 }
 function readRegularFileSync(file, owner) {
-  if (!fs9.statSync(file).isFile()) {
+  if (!fs10.statSync(file).isFile()) {
     throw notRegular(file);
   }
-  const fd = fs9.openSync(file, FLAGS2);
+  const fd = fs10.openSync(file, FLAGS2);
   try {
-    if (refused(fs9.fstatSync(fd), owner)) {
+    if (refused(fs10.fstatSync(fd), owner)) {
       throw notRegular(file);
     }
-    return fs9.readFileSync(fd, "utf-8");
+    return fs10.readFileSync(fd, "utf-8");
   } finally {
-    fs9.closeSync(fd);
+    fs10.closeSync(fd);
   }
 }
 function missing(err) {
@@ -5569,7 +5692,7 @@ function missing(err) {
 function readRegularFileSyncOrNull(file) {
   let st;
   try {
-    st = fs9.statSync(file);
+    st = fs10.statSync(file);
   } catch {
     return null;
   }
@@ -5600,21 +5723,21 @@ function isGateAgent(agent, gateAgents) {
   return gateAgents.some((name) => name.trim().toLowerCase() === bare);
 }
 function readGateAgents(pluginRoot, repoRoot) {
-  const base = namesIn(path13.join(pluginRoot, "config", "tool-gates.json"));
+  const base = namesIn(path14.join(pluginRoot, "config", "tool-gates.json"));
   if (base === null) throw new Error("plugin gateAgents is missing or invalid");
-  return [.../* @__PURE__ */ new Set([...base, ...namesIn(path13.join(repoRoot, ".oss", "tool-gates.json")) ?? []])];
+  return [.../* @__PURE__ */ new Set([...base, ...namesIn(path14.join(repoRoot, ".oss", "tool-gates.json")) ?? []])];
 }
 
 // src/tool-gate/rules/gate-agent-write.ts
-var import_node_fs10 = __toESM(require("node:fs"), 1);
-var import_node_path16 = __toESM(require("node:path"), 1);
+var import_node_fs11 = __toESM(require("node:fs"), 1);
+var import_node_path17 = __toESM(require("node:path"), 1);
 
 // src/tool-gate/rules/protected-path.ts
-var import_node_path14 = __toESM(require("node:path"), 1);
+var import_node_path15 = __toESM(require("node:path"), 1);
 
 // src/tool-gate/review-places.ts
-var import_node_fs9 = __toESM(require("node:fs"), 1);
-var import_node_path13 = __toESM(require("node:path"), 1);
+var import_node_fs10 = __toESM(require("node:fs"), 1);
+var import_node_path14 = __toESM(require("node:path"), 1);
 var FIRMLINK_ROOT = "/System/Volumes/Data";
 var TOOLCHAIN_PLACES = [
   { rel: ".gitconfig", kind: "file" },
@@ -5660,7 +5783,7 @@ var TOOLCHAIN_PLACES = [
 var USER_LEVEL = [".oss", ".claude"];
 function realOrNull(p) {
   try {
-    return import_node_fs9.default.realpathSync(p);
+    return import_node_fs10.default.realpathSync(p);
   } catch {
     return null;
   }
@@ -5677,9 +5800,9 @@ function withoutFirmlink(p, caseInsensitive) {
 }
 function linkInto(p, privateDir, caseInsensitive) {
   let at = "/";
-  for (const segment of import_node_path13.default.normalize(p).split("/").filter((s) => s !== "")) {
-    const next = import_node_path13.default.join(at, segment);
-    const stat = import_node_fs9.default.lstatSync(next, { throwIfNoEntry: false });
+  for (const segment of import_node_path14.default.normalize(p).split("/").filter((s) => s !== "")) {
+    const next = import_node_path14.default.join(at, segment);
+    const stat = import_node_fs10.default.lstatSync(next, { throwIfNoEntry: false });
     if (stat === void 0) return false;
     if (!stat.isSymbolicLink()) {
       at = next;
@@ -5698,7 +5821,7 @@ function linkUnder(dir, max = MAX_PRIVATE_ENTRIES) {
   for (let at = todo.pop(); at !== void 0; at = todo.pop()) {
     let entries;
     try {
-      entries = import_node_fs9.default.readdirSync(at, { withFileTypes: true });
+      entries = import_node_fs10.default.readdirSync(at, { withFileTypes: true });
     } catch {
       continue;
     }
@@ -5706,25 +5829,25 @@ function linkUnder(dir, max = MAX_PRIVATE_ENTRIES) {
       seen += 1;
       if (seen > max) return "too-many";
       if (entry.isSymbolicLink()) return "link";
-      if (entry.isDirectory()) todo.push(import_node_path13.default.join(at, entry.name));
+      if (entry.isDirectory()) todo.push(import_node_path14.default.join(at, entry.name));
     }
   }
   return "none";
 }
 function reviewFoldersRoot(privateDir) {
-  for (let at = privateDir; import_node_path13.default.dirname(at) !== at; at = import_node_path13.default.dirname(at)) if (import_node_path13.default.basename(at) === "oss-review") return at;
+  for (let at = privateDir; import_node_path14.default.dirname(at) !== at; at = import_node_path14.default.dirname(at)) if (import_node_path14.default.basename(at) === "oss-review") return at;
   return null;
 }
 function withReal(paths) {
   return [...new Set(paths.flatMap((p) => [p, realOrNull(p) ?? p]))];
 }
 function readableUnderHome(places) {
-  const toolchain = places.homes.flatMap((home) => TOOLCHAIN_PLACES.map((place) => ({ at: import_node_path13.default.join(home, place.rel), kind: place.kind })));
+  const toolchain = places.homes.flatMap((home) => TOOLCHAIN_PLACES.map((place) => ({ at: import_node_path14.default.join(home, place.rel), kind: place.kind })));
   const own = places.privateDir === void 0 || places.privateDir === null ? [] : [{ at: places.privateDir, kind: "folder" }];
   return [...places.repos.map((at) => ({ at, kind: "folder" })), ...own, ...toolchain];
 }
 function transcriptRoots(tmpdirs) {
-  const given = ["/tmp", "/private/tmp", ...tmpdirs.filter((t) => t !== void 0 && import_node_path13.default.isAbsolute(t)).map((t) => import_node_path13.default.normalize(t).replace(/(.)\/+$/, "$1"))];
+  const given = ["/tmp", "/private/tmp", ...tmpdirs.filter((t) => t !== void 0 && import_node_path14.default.isAbsolute(t)).map((t) => import_node_path14.default.normalize(t).replace(/(.)\/+$/, "$1"))];
   return withReal(given).filter((p) => p !== "/");
 }
 function escapeRegex(text) {
@@ -5740,7 +5863,7 @@ function reachesTranscripts(dir, roots, caseInsensitive) {
   return roots.some((root) => within(dir, root, caseInsensitive) || new RegExp(`^${escapeRegex(root)}/claude-[^/]+(/|$)`, caseInsensitive ? "i" : "").test(dir));
 }
 function readRootsProblem(roots, homes, caseInsensitive) {
-  const guarded = withReal([...homes, ...homes.flatMap((home) => USER_LEVEL.map((rel) => import_node_path13.default.join(home, rel)))]);
+  const guarded = withReal([...homes, ...homes.flatMap((home) => USER_LEVEL.map((rel) => import_node_path14.default.join(home, rel)))]);
   for (const root of withReal(roots)) {
     const hit = guarded.find((p) => within(root, p, caseInsensitive));
     if (hit !== void 0) return `the reviewed repo \`${root}\` is or holds the home folder or ~/.oss or ~/.claude`;
@@ -5769,7 +5892,7 @@ function unfirm(p) {
   return withoutFirmlink(p, true);
 }
 function formsOf(absPath, paths) {
-  return [...new Set([import_node_path14.default.normalize(absPath), paths.realpath(absPath)].map(unfirm))];
+  return [...new Set([import_node_path15.default.normalize(absPath), paths.realpath(absPath)].map(unfirm))];
 }
 var protectedAnswers = /* @__PURE__ */ new WeakMap();
 var holdingAnswers = /* @__PURE__ */ new WeakMap();
@@ -5797,18 +5920,18 @@ function isProtected(absPath, settings, places, paths) {
 }
 function fixedFolder(glob, at) {
   let full;
-  if (glob.startsWith(HOME_PREFIX)) full = import_node_path14.default.join(at.home, glob.slice(HOME_PREFIX.length));
-  else if (import_node_path14.default.isAbsolute(glob)) full = import_node_path14.default.normalize(glob);
-  else full = import_node_path14.default.join(at.root, glob);
-  const segments = full.split(import_node_path14.default.sep);
+  if (glob.startsWith(HOME_PREFIX)) full = import_node_path15.default.join(at.home, glob.slice(HOME_PREFIX.length));
+  else if (import_node_path15.default.isAbsolute(glob)) full = import_node_path15.default.normalize(glob);
+  else full = import_node_path15.default.join(at.root, glob);
+  const segments = full.split(import_node_path15.default.sep);
   const first = segments.findIndex((segment) => WILDCARD.test(segment));
-  return first === -1 ? full : segments.slice(0, first).join(import_node_path14.default.sep) || import_node_path14.default.sep;
+  return first === -1 ? full : segments.slice(0, first).join(import_node_path15.default.sep) || import_node_path15.default.sep;
 }
 function comparable(p, caseInsensitive) {
-  return import_node_path14.default.resolve(caseInsensitive ? p.toLowerCase() : p);
+  return import_node_path15.default.resolve(caseInsensitive ? p.toLowerCase() : p);
 }
 function atOrBelow(dir, of) {
-  return of === dir || of.startsWith(dir.endsWith(import_node_path14.default.sep) ? dir : `${dir}${import_node_path14.default.sep}`);
+  return of === dir || of.startsWith(dir.endsWith(import_node_path15.default.sep) ? dir : `${dir}${import_node_path15.default.sep}`);
 }
 function isSameOrAncestor(dir, of, caseInsensitive) {
   return atOrBelow(comparable(dir, caseInsensitive), comparable(of, caseInsensitive));
@@ -5901,7 +6024,7 @@ function checkProtectedPathEdit(call, settings, root, home, paths, caseInsensiti
 function checkProtectedPathBash(part, settings, root, home, paths, caseInsensitive = false, places = placesOf(root, home, paths, caseInsensitive), tree = createTreeFinder()) {
   const underSetHome = [...part.writeTargets, ...part.writeGlobs, ...part.recursiveTargets, ...part.recursiveGlobs].find((t) => t.includes(HOME_UNKNOWN));
   if (underSetHome !== void 0) return homeSetRefusal(part);
-  const into = INTO_FOLDER.has(plainWriterName(import_node_path14.default.basename(part.program ?? "")));
+  const into = INTO_FOLDER.has(plainWriterName(import_node_path15.default.basename(part.program ?? "")));
   for (const target of part.writeTargets) {
     if (isTooLong(target)) return TOO_LONG;
     if (isProtected(target, settings, places, paths)) return refusal(target, "a protected file", root, home);
@@ -5960,7 +6083,7 @@ function unknownWrite(part, settings, places, paths) {
     if (into && tail !== null && places.some((at) => tailMayHoldProtected(tail.replace(/\/+$/, ""), settings.protectedPaths, at, true))) {
       return {
         rule: "protected-path",
-        reason: `Refused: \`${import_node_path14.default.basename(part.program ?? "")}\` writes into, or moves, a folder with a part only known when it runs (a variable or \`$(\u2026)\`), which could hold protected files. Write the folder out in full.`
+        reason: `Refused: \`${import_node_path15.default.basename(part.program ?? "")}\` writes into, or moves, a folder with a part only known when it runs (a variable or \`$(\u2026)\`), which could hold protected files. Write the folder out in full.`
       };
     }
     if (tail === null) {
@@ -5972,7 +6095,7 @@ function unknownWrite(part, settings, places, paths) {
     }
     return {
       rule: "protected-path",
-      reason: `Refused: \`${import_node_path14.default.basename(part.program ?? "")}\` writes a path with a part only known when it runs (a variable or \`$(\u2026)\`), which could be a protected file. Write the path out in full, or set the variable to a plain value earlier in the same command.`
+      reason: `Refused: \`${import_node_path15.default.basename(part.program ?? "")}\` writes a path with a part only known when it runs (a variable or \`$(\u2026)\`), which could be a protected file. Write the path out in full, or set the variable to a plain value earlier in the same command.`
     };
   }
   return null;
@@ -6016,13 +6139,13 @@ function unescapeGlob(pattern) {
 function homeSetRefusal(part) {
   return {
     rule: "protected-path",
-    reason: `Refused: \`${import_node_path14.default.basename(part.program ?? "")}\` writes through \`~\` or \`$HOME\` in a call that also sets HOME, so the gate can't tell which folder it writes, a protected one included. Leave HOME alone and write the path out in full.`
+    reason: `Refused: \`${import_node_path15.default.basename(part.program ?? "")}\` writes through \`~\` or \`$HOME\` in a call that also sets HOME, so the gate can't tell which folder it writes, a protected one included. Leave HOME alone and write the path out in full.`
   };
 }
 function unreadableFolder(part) {
   return {
     rule: "protected-path",
-    reason: `Refused: \`${import_node_path14.default.basename(part.program ?? "")}\` changes everything in a folder the gate can't read (a variable or command output). A recursive write must name its folder literally, so the gate can check it holds no .git or other protected file. Write the path out, for example \`/tmp/tmp.abc123\` instead of \`"$d"\`.`
+    reason: `Refused: \`${import_node_path15.default.basename(part.program ?? "")}\` changes everything in a folder the gate can't read (a variable or command output). A recursive write must name its folder literally, so the gate can check it holds no .git or other protected file. Write the path out, for example \`/tmp/tmp.abc123\` instead of \`"$d"\`.`
   };
 }
 function nestedRefusal(target, found2, root, home) {
@@ -6092,7 +6215,7 @@ function lostTail(part, settings, places) {
 }
 
 // src/tool-gate/rules/review-commands.ts
-var import_node_path15 = __toESM(require("node:path"), 1);
+var import_node_path16 = __toESM(require("node:path"), 1);
 function optionName(word) {
   const eq = word.indexOf("=");
   return eq === -1 ? word : word.slice(0, eq);
@@ -6462,7 +6585,7 @@ function packageCommand(part) {
   }
   if (name === "node" || name === "nodejs") {
     const script = scriptArgument(part);
-    const cli = script === null ? void 0 : NODE_CLIS.find(([file]) => file.test(import_node_path15.default.posix.basename(script)));
+    const cli = script === null ? void 0 : NODE_CLIS.find(([file]) => file.test(import_node_path16.default.posix.basename(script)));
     return cli === void 0 || script === null ? null : { manager: cli[1], words: args.slice(args.indexOf(script) + 1) };
   }
   if (name === "npx") return { manager: "npx", words: args };
@@ -6849,14 +6972,14 @@ function inTemp2(target, scope, paths, caseInsensitive) {
   if (DEV_SINK.test(target)) return true;
   const fixed = fixedPart(target);
   const roots = rootsOf(scope.temp, paths);
-  const forms2 = [import_node_path16.default.normalize(fixed), paths.realpath(fixed)];
+  const forms2 = [import_node_path17.default.normalize(fixed), paths.realpath(fixed)];
   return forms2.every((p) => roots.some((r) => isSameOrAncestor(r, p, caseInsensitive))) && !touches(target, [...offLimits(scope), scope.home], paths, caseInsensitive);
 }
 function offLimits(scope) {
   return [...scope.repos, ...userLevel(scope)];
 }
 function userLevel(scope) {
-  return USER_LEVEL_OFF_LIMITS.map((p) => import_node_path16.default.join(scope.home, p));
+  return USER_LEVEL_OFF_LIMITS.map((p) => import_node_path17.default.join(scope.home, p));
 }
 function fixedPart(p) {
   const segments = p.split("/");
@@ -6868,14 +6991,14 @@ function rootsOf(places, paths) {
 }
 function touches(absPath, places, paths, caseInsensitive) {
   const fixed = fixedPart(absPath);
-  const forms2 = [import_node_path16.default.normalize(fixed), paths.realpath(fixed)];
+  const forms2 = [import_node_path17.default.normalize(fixed), paths.realpath(fixed)];
   const roots = rootsOf(places, paths);
   return forms2.some((p) => roots.some((r) => isSameOrAncestor(r, p, caseInsensitive) || isSameOrAncestor(p, r, caseInsensitive)));
 }
 function insideRepo(dir, repos, paths, caseInsensitive) {
   if (dir.includes(UNKNOWN)) return true;
   const fixed = fixedPart(dir);
-  const forms2 = [import_node_path16.default.normalize(fixed), paths.realpath(fixed)];
+  const forms2 = [import_node_path17.default.normalize(fixed), paths.realpath(fixed)];
   return forms2.some((p) => rootsOf(repos, paths).some((r) => isSameOrAncestor(r, p, caseInsensitive)));
 }
 function refusal2(what) {
@@ -6885,25 +7008,25 @@ function checkGateAgentEdit(call, agent, settings, scope, paths, caseInsensitive
   if (!isGateAgent(agent, settings.gateAgents)) return null;
   const own = scope.privateDir ?? null;
   if (own !== null && inOwnFolder(call.filePath, own, scope, paths, caseInsensitive)) return null;
-  if (newOffloadPrompt(call.filePath, scope.temp) && (scope.offloadFolders ?? []).includes(import_node_path16.default.dirname(call.filePath))) return null;
+  if (newOffloadPrompt(call.filePath, scope.temp) && (scope.offloadFolders ?? []).includes(import_node_path17.default.dirname(call.filePath))) return null;
   const instead = own === null ? "its private folder can't be made right now" : `write in its own private folder \`${own}\` instead`;
   return refusal2(`a review agent's Write and Edit tools may write only in its own private folder, not \`${call.filePath}\`; ${instead}`);
 }
 function inOwnFolder(file, own, scope, paths, caseInsensitive) {
-  if (file.includes(UNKNOWN) || file.length > MAX_WORD || !import_node_path16.default.isAbsolute(file)) return false;
-  const forms2 = [import_node_path16.default.normalize(file), paths.realpath(import_node_path16.default.normalize(file))];
+  if (file.includes(UNKNOWN) || file.length > MAX_WORD || !import_node_path17.default.isAbsolute(file)) return false;
+  const forms2 = [import_node_path17.default.normalize(file), paths.realpath(import_node_path17.default.normalize(file))];
   return forms2.every((p) => isSameOrAncestor(own, p, caseInsensitive) && p !== own) && !touches(file, [...offLimits(scope), scope.home], paths, caseInsensitive) && // round 11, SEC CRITICAL-1: no link in the private folder on the way
   !linkInto(file, own, caseInsensitive);
 }
 function newOffloadPrompt(file, temp) {
-  if (!import_node_path16.default.isAbsolute(file) || import_node_path16.default.normalize(file) !== file || import_node_path16.default.basename(file) !== "prompt.md") return false;
-  const folder = import_node_path16.default.dirname(file);
-  if (!/^oss-offload\.[A-Za-z0-9.]+$/.test(import_node_path16.default.basename(folder)) || !offloadFolderSafe(folder, temp)) return false;
-  return import_node_fs10.default.lstatSync(file, { throwIfNoEntry: false }) === void 0;
+  if (!import_node_path17.default.isAbsolute(file) || import_node_path17.default.normalize(file) !== file || import_node_path17.default.basename(file) !== "prompt.md") return false;
+  const folder = import_node_path17.default.dirname(file);
+  if (!/^oss-offload\.[A-Za-z0-9.]+$/.test(import_node_path17.default.basename(folder)) || !offloadFolderSafe(folder, temp)) return false;
+  return import_node_fs11.default.lstatSync(file, { throwIfNoEntry: false }) === void 0;
 }
 function absolute(word, cwd, home) {
-  if (word === "~" || word.startsWith("~/")) return import_node_path16.default.join(home, word.slice(1));
-  return word.startsWith("~") ? UNKNOWN : import_node_path16.default.resolve(cwd, word);
+  if (word === "~" || word.startsWith("~/")) return import_node_path17.default.join(home, word.slice(1));
+  return word.startsWith("~") ? UNKNOWN : import_node_path17.default.resolve(cwd, word);
 }
 function gitGlobals(part, git) {
   return part.words.slice(1, Math.max(1, part.words.length - git.args.length - 1));
@@ -6918,7 +7041,7 @@ function checkGit(part, scope, paths, caseInsensitive) {
   const pointed = [
     ...optionValues(gitGlobals(part, git), ["--git-dir", "--work-tree"]),
     ...part.assignments.flatMap((name, i) => GIT_DIR_VARIABLES.has(name) ? [part.assignmentValues[i] ?? UNKNOWN] : [])
-  ].map((p) => import_node_path16.default.resolve(part.cwd, p));
+  ].map((p) => import_node_path17.default.resolve(part.cwd, p));
   if (!runsInRepo({ ...part, cwd: git.dir }, pointed, scope, paths, caseInsensitive)) return null;
   const setup = gitGlobals(part, git).some((w) => GIT_SETUP_OPTIONS.includes(optionName(w)));
   if (!setup && git.unknownOption === void 0 && readOnlyGit(git.subcommand, git.args)) return null;
@@ -6979,7 +7102,7 @@ function runsReviewCheck(part, home, paths) {
   return [part.program, scriptArgument(part)].some((word) => {
     if (word === null) return false;
     const file = absolute(word, part.cwd, home);
-    return [file, paths.realpath(file)].some((p) => REVIEW_CHECK_FILES.has(import_node_path16.default.posix.basename(p)));
+    return [file, paths.realpath(file)].some((p) => REVIEW_CHECK_FILES.has(import_node_path17.default.posix.basename(p)));
   });
 }
 function checkOffload(part, agent) {
@@ -7031,14 +7154,14 @@ var UV_NO_SYNC = /* @__PURE__ */ new Set(["--frozen", "--no-sync"]);
 var UV_QUIET = /* @__PURE__ */ new Set(["--offline", "-q", "--quiet"]);
 function packageAllowed(runner2, tool, settings, scope, fetchesMissing, cwd) {
   if (tool.includes("/")) return false;
-  const installed = binFolders(cwd, scope).some((dir) => scope.exists(import_node_path16.default.join(dir, tool)));
+  const installed = binFolders(cwd, scope).some((dir) => scope.exists(import_node_path17.default.join(dir, tool)));
   return isJsTool(tool) && (!fetchesMissing || installed) || (settings.reviewNpxPackages ?? []).includes(tool) || settings.testCommandPatterns.includes(`${runner2} ${tool}`) || installed;
 }
 function binFolders(cwd, scope) {
-  const folders = scope.repos.map((repo2) => import_node_path16.default.join(repo2, "node_modules", ".bin"));
+  const folders = scope.repos.map((repo2) => import_node_path17.default.join(repo2, "node_modules", ".bin"));
   const repo = cwd.includes(UNKNOWN) ? void 0 : scope.repos.find((r) => isSameOrAncestor(r, cwd, false));
   if (repo === void 0) return folders;
-  for (let dir = cwd; dir !== repo && dir !== import_node_path16.default.dirname(dir); dir = import_node_path16.default.dirname(dir)) folders.push(import_node_path16.default.join(dir, "node_modules", ".bin"));
+  for (let dir = cwd; dir !== repo && dir !== import_node_path17.default.dirname(dir); dir = import_node_path17.default.dirname(dir)) folders.push(import_node_path17.default.join(dir, "node_modules", ".bin"));
   return folders;
 }
 var FETCHING_RUNNERS = /* @__PURE__ */ new Set(["npx", "bunx", "npm exec", "npm x"]);
@@ -7225,7 +7348,7 @@ function gitCreates(git, home) {
   const options = optionValues(git.args, ["--separate-git-dir", "--template"]);
   if (git.subcommand === "init") return [...named2.length > 0 ? named2.slice(0, 1) : ["."], ...options].map((w) => absolute(w, git.dir, home));
   if (git.subcommand !== "clone") return [];
-  const into = named2[1] ?? import_node_path16.default.posix.basename(named2[0] ?? "").replace(/\.git$/, "");
+  const into = named2[1] ?? import_node_path17.default.posix.basename(named2[0] ?? "").replace(/\.git$/, "");
   return [into, ...options].map((w) => absolute(w, git.dir, home));
 }
 var PROMPT_PLACEHOLDER = "'<path printed in step 1>'";
@@ -7256,14 +7379,14 @@ function isOwnSetupStep(command, agentFileText, temp, excluded = [], folderSafe 
   return false;
 }
 function offloadFolderSafe(folder, temp) {
-  const parent = import_node_path16.default.dirname(folder);
+  const parent = import_node_path17.default.dirname(folder);
   if (!temp.includes(parent)) return false;
   try {
     const uid = process.getuid?.();
-    const dir = import_node_fs10.default.lstatSync(folder);
+    const dir = import_node_fs11.default.lstatSync(folder);
     if (!dir.isDirectory() || dir.isSymbolicLink() || dir.uid !== uid || (dir.mode & 511) !== 448) return false;
-    if (import_node_fs10.default.realpathSync(folder) !== import_node_path16.default.join(import_node_fs10.default.realpathSync(parent), import_node_path16.default.basename(folder))) return false;
-    const prompt = import_node_fs10.default.lstatSync(import_node_path16.default.join(folder, "prompt.md"), { throwIfNoEntry: false });
+    if (import_node_fs11.default.realpathSync(folder) !== import_node_path17.default.join(import_node_fs11.default.realpathSync(parent), import_node_path17.default.basename(folder))) return false;
+    const prompt = import_node_fs11.default.lstatSync(import_node_path17.default.join(folder, "prompt.md"), { throwIfNoEntry: false });
     return prompt === void 0 || prompt.isFile() && prompt.uid === uid && prompt.nlink === 1;
   } catch {
     return false;
@@ -7638,16 +7761,16 @@ function namesUserFiles(part, scope, paths, caseInsensitive) {
     if (word === TOO_LONG2) return true;
     if (word.includes(UNKNOWN)) return false;
     const p = absolute(word, part.cwd, scope.home);
-    return [import_node_path16.default.normalize(p), paths.realpath(p)].some((form) => roots.some((r) => isSameOrAncestor(r, form, caseInsensitive)));
+    return [import_node_path17.default.normalize(p), paths.realpath(p)].some((form) => roots.some((r) => isSameOrAncestor(r, form, caseInsensitive)));
   });
 }
 
 // src/tool-gate/rules/review-read.ts
-var import_node_fs11 = __toESM(require("node:fs"), 1);
-var import_node_path18 = __toESM(require("node:path"), 1);
+var import_node_fs12 = __toESM(require("node:fs"), 1);
+var import_node_path19 = __toESM(require("node:path"), 1);
 
 // src/tool-gate/credential-places.ts
-var import_node_path17 = __toESM(require("node:path"), 1);
+var import_node_path18 = __toESM(require("node:path"), 1);
 var CREDENTIAL_PLACES = [
   { rel: ".ssh", kind: "folder" },
   { rel: ".config/gh", kind: "folder" },
@@ -7675,7 +7798,7 @@ var CREDENTIAL_PLACES = [
   { rel: ".cabal/config", kind: "prefix" }
 ];
 function credentialPaths(homes) {
-  return homes.flatMap((home) => CREDENTIAL_PLACES.map((place) => ({ path: import_node_path17.default.join(home, place.rel), kind: place.kind })));
+  return homes.flatMap((home) => CREDENTIAL_PLACES.map((place) => ({ path: import_node_path18.default.join(home, place.rel), kind: place.kind })));
 }
 
 // src/tool-gate/rules/review-read.ts
@@ -7694,8 +7817,8 @@ function refused2(what) {
   };
 }
 function expand2(p, home, cwd) {
-  if (p === "~" || p.startsWith("~/")) return import_node_path18.default.join(home, p.slice(1));
-  return import_node_path18.default.resolve(cwd, p);
+  if (p === "~" || p.startsWith("~/")) return import_node_path19.default.join(home, p.slice(1));
+  return import_node_path19.default.resolve(cwd, p);
 }
 function forms(p, caseInsensitive) {
   let at = p;
@@ -7704,12 +7827,12 @@ function forms(p, caseInsensitive) {
   for (; ; ) {
     tick();
     try {
-      real = import_node_path18.default.join(import_node_fs11.default.realpathSync(at), ...rest.reverse());
+      real = import_node_path19.default.join(import_node_fs12.default.realpathSync(at), ...rest.reverse());
       break;
     } catch {
-      if (import_node_path18.default.dirname(at) === at) break;
-      rest.push(import_node_path18.default.basename(at));
-      at = import_node_path18.default.dirname(at);
+      if (import_node_path19.default.dirname(at) === at) break;
+      rest.push(import_node_path19.default.basename(at));
+      at = import_node_path19.default.dirname(at);
     }
   }
   return [...new Set([p, ...real === null ? [] : [real]].map((form) => withoutFirmlink(form, caseInsensitive)))];
@@ -7758,7 +7881,7 @@ function checkReviewRead(toolName, toolInput, cwd, scope, caseInsensitive) {
     if (file === void 0) return null;
     const all = forms(expand2(file, home, cwd), caseInsensitive);
     if (readableForms(all)) return null;
-    const saved = all.some((p) => homes.some((h) => new RegExp(`^${escapeRegex2(import_node_path18.default.join(h, ".claude", "projects"))}/[^/]+/[^/]+/tool-results/`, caseInsensitive ? "i" : "").test(p)) || inTranscripts(p, transcripts, caseInsensitive));
+    const saved = all.some((p) => homes.some((h) => new RegExp(`^${escapeRegex2(import_node_path19.default.join(h, ".claude", "projects"))}/[^/]+/[^/]+/tool-results/`, caseInsensitive ? "i" : "").test(p)) || inTranscripts(p, transcripts, caseInsensitive));
     return refused2(`\`${file}\` is outside what a review agent may read${saved ? `; it is a saved tool output: ${SAVED_OUTPUT}` : ""}`);
   }
   const given = text("path") ?? cwd;
@@ -7776,15 +7899,15 @@ function checkReviewRead(toolName, toolInput, cwd, scope, caseInsensitive) {
   }
   const pattern = text("pattern");
   if (pattern === void 0) return null;
-  const glob = pattern.startsWith("~") ? expand2(pattern, home, cwd) : import_node_path18.default.isAbsolute(pattern) ? pattern : `${base}/${pattern}`;
+  const glob = pattern.startsWith("~") ? expand2(pattern, home, cwd) : import_node_path19.default.isAbsolute(pattern) ? pattern : `${base}/${pattern}`;
   if (tooLong(glob)) return refused2(`a path or pattern over ${MAX_CHARS} characters or ${MAX_SEGMENTS} segments can't be checked`);
-  const fixed = import_node_path18.default.normalize(fixedPart2(glob));
+  const fixed = import_node_path19.default.normalize(fixedPart2(glob));
   const climbs = glob.slice(fixedPart2(glob).length).split("/").includes("..");
   return !climbs && !firmlinkRoot(fixed) && searchable(forms(fixed, caseInsensitive)) ? ownSearch(fixed) : refused2(`the pattern \`${pattern}\` reaches beyond what a review agent may read`);
 }
 
 // src/tool-gate/rules/focused-tests.ts
-var import_node_path19 = __toESM(require("node:path"), 1);
+var import_node_path20 = __toESM(require("node:path"), 1);
 var MARKER = /\.(skip|only|todo)(If)?(?:\.concurrent)?(?:\.each)?\s*[(`]/g;
 var PREFIXED_CALL = /(?<![\w$.])(xit|fit|xdescribe|fdescribe|xtest)\s*\(/g;
 function countMarkers(text) {
@@ -7804,8 +7927,8 @@ function addedMarker(before, after) {
   return void 0;
 }
 function displayPath2(filePath, root) {
-  const relative = import_node_path19.default.relative(root, filePath);
-  return relative === ".." || relative.startsWith(`..${import_node_path19.default.sep}`) || import_node_path19.default.isAbsolute(relative) ? filePath : relative;
+  const relative = import_node_path20.default.relative(root, filePath);
+  return relative === ".." || relative.startsWith(`..${import_node_path20.default.sep}`) || import_node_path20.default.isAbsolute(relative) ? filePath : relative;
 }
 function checkFocusedTests(call, settings, root, home, caseInsensitive = false) {
   if (!matchAnyPath(settings.testFilePatterns, call.filePath, { home, root, caseInsensitive })) return null;
@@ -7894,8 +8017,8 @@ function checkForcePush(part, _settings) {
 }
 
 // src/tool-gate/rules/git-clean.ts
-var import_node_fs12 = __toESM(require("node:fs"), 1);
-var import_node_path20 = __toESM(require("node:path"), 1);
+var import_node_fs13 = __toESM(require("node:fs"), 1);
+var import_node_path21 = __toESM(require("node:path"), 1);
 var CHOOSING_LETTERS = /* @__PURE__ */ new Set(["d", "x", "X"]);
 var OTHER_LETTERS = /* @__PURE__ */ new Set(["i", "q"]);
 var FORCE_LONG = { full: "--force", shortest: 3 };
@@ -7982,21 +8105,21 @@ function staleningPart(earlier, count) {
   for (let i = 0; i < count; i++) {
     const part = earlier[i];
     if (part.git !== null && !LEAVES_INDEX.has(part.git.subcommand)) return part;
-    if (part.writeTargets.some((t) => IGNORE_FILES.has(import_node_path20.default.posix.basename(t)) || t.includes("/.git/"))) return part;
+    if (part.writeTargets.some((t) => IGNORE_FILES.has(import_node_path21.default.posix.basename(t)) || t.includes("/.git/"))) return part;
     if (part.writeGlobs.some((g) => g.includes("gitignore") || g.includes("/.git/"))) return part;
   }
   return null;
 }
 function onDiskFolder(p) {
   try {
-    return import_node_fs12.default.lstatSync(p, { throwIfNoEntry: false })?.isDirectory() === true;
+    return import_node_fs13.default.lstatSync(p, { throwIfNoEntry: false })?.isDirectory() === true;
   } catch {
     return false;
   }
 }
 function holdsRepo(dir) {
   try {
-    return import_node_fs12.default.lstatSync(import_node_path20.default.join(dir, ".git"), { throwIfNoEntry: false }) !== void 0;
+    return import_node_fs13.default.lstatSync(import_node_path21.default.join(dir, ".git"), { throwIfNoEntry: false }) !== void 0;
   } catch {
     return false;
   }
@@ -8013,6 +8136,91 @@ function carriesSetup(part, git) {
   const globals = part.words.slice(1, part.words.length - git.args.length - 1);
   const other = globals.filter((w, n) => w !== "-C" && globals[n - 1] !== "-C");
   return other.length > 0 || part.assignments.some((name) => name.startsWith("GIT_"));
+}
+var STASH_LETTERS = /* @__PURE__ */ new Set(["p", "S", "k", "q"]);
+var STASH_ALL_LONG = { full: "--all", shortest: 3 };
+var STASH_NO_ALL_LONG = { full: "--no-all", shortest: 6 };
+var STASH_UNTRACKED_LONG = { full: "--include-untracked", shortest: 3 };
+var STASH_NO_UNTRACKED_LONG = { full: "--no-include-untracked", shortest: 6 };
+var STASH_MESSAGE_LONG = { full: "--message", shortest: 3 };
+var STASH_FROM_FILE_LONG = { full: "--pathspec-from-file", shortest: 13 };
+var STASH_OTHER_LONG = [
+  { full: "--patch", shortest: 6 },
+  { full: "--staged", shortest: 3 },
+  { full: "--keep-index", shortest: 3 },
+  { full: "--no-keep-index", shortest: 6 },
+  { full: "--quiet", shortest: 3 },
+  { full: "--pathspec-file-nul", shortest: 13 }
+];
+function readStashWords(args) {
+  const sub = args[0];
+  const save = sub === "save";
+  if (sub !== void 0 && sub !== "push" && !save && !sub.startsWith("-")) return null;
+  const rest = sub === "push" || save ? args.slice(1) : args;
+  const pathspecs = [];
+  let untracked = 0;
+  let fromFile = false;
+  for (let i = 0; i < rest.length; i++) {
+    const a = rest[i];
+    if (a === "--") {
+      pathspecs.push(...rest.slice(i + 1));
+      break;
+    }
+    if (!a.startsWith("-") || a === "-") pathspecs.push(a);
+    else if (a.startsWith("--")) {
+      if (isLong(a, STASH_ALL_LONG)) untracked = 2;
+      else if (isLong(a, STASH_UNTRACKED_LONG)) untracked = 1;
+      else if (isLong(a, STASH_NO_ALL_LONG) || isLong(a, STASH_NO_UNTRACKED_LONG)) untracked = 0;
+      else if (isLong(a, STASH_MESSAGE_LONG) || isLong(a, STASH_FROM_FILE_LONG)) {
+        fromFile ||= isLong(a, STASH_FROM_FILE_LONG);
+        if (!a.includes("=")) i++;
+      } else if (!STASH_OTHER_LONG.some((o) => isLong(a, o))) return "unknown";
+    } else {
+      for (let j = 1; j < a.length; j++) {
+        const letter = a[j];
+        if (letter === "a") untracked = 2;
+        else if (letter === "u") untracked = 1;
+        else if (letter === "m") {
+          if (j + 1 === a.length) i++;
+          break;
+        } else if (!STASH_LETTERS.has(letter)) return "unknown";
+      }
+    }
+  }
+  return { untracked, pathspecs: save ? [] : pathspecs, fromFile };
+}
+var STASH_UNTRACKED_AS_CLEAN = ["-d"];
+function inRepoPathspecs(settings) {
+  return settings.protectedPaths.filter((p) => !p.startsWith("~") && !p.startsWith("*") && !p.startsWith("/")).map((p) => `:/${p.replace(/\/\*\*$/, "")}`);
+}
+async function checkGitStash(part, settings, root, home, paths, gitReader, places, context = {}) {
+  const git = part.git;
+  if (git === null || git.subcommand !== "stash") return null;
+  const words = readStashWords(git.args);
+  if (words === null || words !== "unknown" && words.untracked === 0) return null;
+  if (words !== "unknown" && words.untracked === 2) {
+    return {
+      rule: "protected-path",
+      reason: "Refused: `git stash -a` / `--all` also takes ignored files out of the worktree, protected OSS files among them. Stash without it, or ask the user to run it with `!`."
+    };
+  }
+  const cantTell = {
+    rule: "protected-path",
+    reason: "Refused: the gate can't check what this `git stash -u` would take out of the worktree, so it may sweep protected OSS files away. Run a plain `git stash -u` without extra settings, or ask the user to run it with `!`."
+  };
+  const stale = staleningPart(context.earlier ?? [], context.count ?? 0) !== null;
+  if (words === "unknown" || words.fromFile || stale || part.lostDir !== null || words.pathspecs.some((w) => w.includes(UNKNOWN)) || carriesSetup(part, git)) {
+    return cantTell;
+  }
+  const specs = words.pathspecs.length > 0 ? words.pathspecs : inRepoPathspecs(settings);
+  const removed = await gitReader.wouldClean(git.dir, [...STASH_UNTRACKED_AS_CLEAN], specs);
+  if (removed === null) return cantTell;
+  const hit = removed.map((p) => joinRaw(git.dir, p)).find((p) => isProtected(p, settings, places, paths) || holdsProtected(p, settings, places, paths));
+  if (hit === void 0) return null;
+  return {
+    rule: "protected-path",
+    reason: `Refused: \`git stash -u\` would take \`${displayPath(hit, root, home)}\`, a protected path or a folder holding one, out of the worktree. Ask the user to run it with \`!\`.`
+  };
 }
 function expandTilde2(p, home) {
   if (p === "~") return home;
@@ -8078,8 +8286,628 @@ function checkProductionHost(part, settings) {
 }
 
 // src/tool-gate/rules/oss-hook-env.ts
-var import_node_fs13 = __toESM(require("node:fs"), 1);
-var import_node_path21 = __toESM(require("node:path"), 1);
+var import_node_fs14 = __toESM(require("node:fs"), 1);
+var import_node_path24 = __toESM(require("node:path"), 1);
+
+// src/tool-gate/rules/protected-path-mention.ts
+var import_node_path22 = __toESM(require("node:path"), 1);
+var SCRIPT_LAUNCHERS = /* @__PURE__ */ new Set(["trap", "emulate", "sched"]);
+function launchedScript(name, words) {
+  const args = words.slice(1);
+  if (name === "trap") return args[args[0] === "--" ? 1 : 0] ?? "";
+  if (name === "emulate") return args[args.indexOf("-c") + 1] ?? "";
+  return args.slice(args.findIndex((a) => !a.startsWith("-")) + 1).join(" ");
+}
+function shortened(text) {
+  return text.length > 60 ? `${text.slice(0, 59)}\u2026` : text;
+}
+var READ_ONLY = /* @__PURE__ */ new Set([
+  "cat",
+  "less",
+  "head",
+  "tail",
+  "grep",
+  "rg",
+  "ls",
+  "stat",
+  "file",
+  "wc",
+  "diff",
+  "cmp",
+  "md5",
+  "shasum",
+  "test",
+  "[",
+  "[[",
+  "find",
+  "cd",
+  "pushd",
+  "popd",
+  "jq",
+  "echo",
+  "printf"
+]);
+var SAFE_IN_PROTECTED_FOLDER = /* @__PURE__ */ new Set(["mkdir"]);
+var FOLDER_MAKERS = /* @__PURE__ */ new Set(["mkdir"]);
+var GIT_READ_ONLY = /* @__PURE__ */ new Set(["diff", "log", "show", "status", "blame", "ls-files"]);
+var GIT_INDEX_ONLY = /* @__PURE__ */ new Set(["add"]);
+var WRITING_OPTIONS = /* @__PURE__ */ new Map([
+  ["find", ["-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprint0", "-fprintf", "-fls"]],
+  ["rg", ["--pre"]],
+  ["file", ["-C", "--compile"]],
+  ["git", ["--output"]]
+]);
+var SED_NAMES2 = /* @__PURE__ */ new Set(["sed", "gsed"]);
+var SED_VALUE_LETTERS2 = /* @__PURE__ */ new Set(["e", "f", "l"]);
+var SED_VALUE_LONG = /* @__PURE__ */ new Set(["--expression", "--file", "--line-length"]);
+var AWK_NAMES2 = /* @__PURE__ */ new Set(["awk", "gawk", "mawk", "nawk"]);
+function sedEditsInPlace(args) {
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === "--") return false;
+    if (a.startsWith("--")) {
+      if (longOption(a, "--in-place", 3)) return true;
+      if (SED_VALUE_LONG.has(a)) i++;
+    } else if (a.startsWith("-") && a.length > 1) {
+      for (let j = 1; j < a.length; j++) {
+        if (a[j] === "i" || a[j] === "I") return true;
+        if (SED_VALUE_LETTERS2.has(a[j])) {
+          if (j === a.length - 1) i++;
+          break;
+        }
+      }
+    }
+  }
+  return false;
+}
+var CWD_WRITERS = /* @__PURE__ */ new Set(["tar", "bsdtar", "gtar", "unzip", "cpio", "pax", "7z", "7za", "ar", "wget"]);
+var CURL_SAVES_HERE = /^(?:--remote-name(?:-all)?|--remote-header-name|--output-dir(?:=.*)?|-(?=[A-Za-z]*[OJ])[A-Za-z]+)$/;
+function writesIntoCwd(part, name) {
+  if (CWD_WRITERS.has(name)) return true;
+  return name === "curl" && part.words.slice(1).some((w) => CURL_SAVES_HERE.test(w));
+}
+var INTERPRETERS2 = /* @__PURE__ */ new Set(["python", "python3", "node", "perl", "ruby", "sh", "bash", "zsh", "osascript", "deno", "bun"]);
+var PYTHON3 = /^python[0-9.]*$/;
+function isInterpreter2(name) {
+  return INTERPRETERS2.has(name) || PYTHON3.test(name);
+}
+var SCRIPT_RUNNERS = /* @__PURE__ */ new Set(["source", "."]);
+var SCRIPT_FLAG = /^(?:-[A-Za-z]*[ceE]|--eval|-p|--print)$/;
+var QUOTES = /* @__PURE__ */ new Set(["'", '"', "`"]);
+function foundPath(part, ctx, dir) {
+  if (plainWriterName(part.name ?? "") !== "find") return null;
+  const writing = WRITING_OPTIONS.get("find") ?? [];
+  if (!part.words.slice(1).some((w) => writing.includes(w))) return null;
+  const starts = findStarts(part.words.slice(1)).map((start) => joinRaw(dir, expandTilde3(start, ctx.home)));
+  return starts.find((p) => isProtected(p, ctx.settings, ctx.places, ctx.paths) || holdsProtected(p, ctx.settings, ctx.places, ctx.paths)) ?? null;
+}
+var GIT_COMMAND_SETTINGS = ["-c", "--config-env"];
+var GIT_VARIABLE2 = /^GIT_/;
+function carriesGitSettings(part) {
+  const git = part.git;
+  if (git === null) return false;
+  const globals = part.words.slice(1, part.words.length - git.args.length - 1);
+  return globals.some((w) => GIT_COMMAND_SETTINGS.some((o) => w === o || w.startsWith(`${o}=`))) || part.assignments.some((n) => GIT_VARIABLE2.test(n));
+}
+function isReadOnly(part, name) {
+  const writing = WRITING_OPTIONS.get(name) ?? [];
+  const args = part.words.slice(1);
+  if (args.some((w) => writing.some((o) => w === o || w.startsWith(`${o}=`)))) return false;
+  if (name === "git") return part.git !== null && GIT_READ_ONLY.has(part.git.subcommand) && !carriesGitSettings(part);
+  if (SED_NAMES2.has(name)) return !sedEditsInPlace(args) && !runsScriptFile(name, args);
+  if (AWK_NAMES2.has(name)) return !awkFacts(args).loads && !runsScriptFile(name, args);
+  return READ_ONLY.has(name);
+}
+function safeInProtectedFolder(part, name) {
+  return SAFE_IN_PROTECTED_FOLDER.has(name) || name === "git" && part.git !== null && GIT_INDEX_ONLY.has(part.git.subcommand) && !carriesGitSettings(part);
+}
+function expandTilde3(p, home) {
+  if (p === "~") return home;
+  return p.startsWith("~/") ? home + p.slice(1) : p;
+}
+function isRootOrAbove(given, places) {
+  const absPath = unfirm(given);
+  return places.some((at) => {
+    const ci = at.caseInsensitive === true;
+    return isSameOrAncestor(absPath, at.root, ci) || isSameOrAncestor(absPath, at.home, ci);
+  });
+}
+function namedPattern(part, word, dir, ctx) {
+  const glob = part.globs.get(word);
+  if (glob === void 0) return null;
+  for (const value of valuesOf(glob)) {
+    const pattern = globPathOf(value, escapeGlob(dir), ctx.home);
+    if (patternReachesProtected(pattern, ctx.settings, ctx.places, ctx.paths, true, part.dotGlob)) return pattern;
+  }
+  return null;
+}
+function namedPath(word, dir, ctx, folders = true) {
+  const unknownAt = word.indexOf(UNKNOWN);
+  if (unknownAt !== -1) {
+    const known = word.slice(0, unknownAt);
+    if (known === "") return null;
+    const absPath2 = joinRaw(dir, expandTilde3(known + UNKNOWN, ctx.home));
+    return isProtected(absPath2, ctx.settings, ctx.places, ctx.paths) ? absPath2 : null;
+  }
+  const absPath = joinRaw(dir, expandTilde3(word, ctx.home));
+  if (isProtected(absPath, ctx.settings, ctx.places, ctx.paths)) return absPath;
+  if (!folders) return null;
+  const holds = holdsProtected(absPath, ctx.settings, ctx.places, ctx.paths);
+  return holds && !isRootOrAbove(import_node_path22.default.normalize(absPath), ctx.places) ? absPath : null;
+}
+function protectedPathNamed(word, dir, settings, places, paths, home) {
+  const ctx = { settings, places, paths, home };
+  for (const value of valuesOf(word)) {
+    if (isTooLong(value)) continue;
+    const named2 = namedPath(value, dir, ctx);
+    if (named2 !== null) return named2;
+  }
+  return null;
+}
+function valuesOf(word) {
+  const eq = word.indexOf("=");
+  return eq === -1 ? [word] : [word, word.slice(eq + 1)];
+}
+function wordsOf(part, name) {
+  const args = part.words.slice(1);
+  if (name === "cp") {
+    const { sources, dest } = cpOperands(args);
+    const files = /* @__PURE__ */ new Set([...sources, ...dest === null ? [] : [dest]]);
+    return { words: args.filter((a) => !files.has(a)), scripts: [] };
+  }
+  const interpreter = isInterpreter2(name);
+  if (!interpreter && !SCRIPT_RUNNERS.has(import_node_path22.default.posix.basename(part.program ?? ""))) return { words: args, scripts: [] };
+  const words = [];
+  const scripts = [];
+  let scriptSeen = false;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (interpreter && SCRIPT_FLAG.test(a) && i + 1 < args.length) {
+      scripts.push(args[++i]);
+      scriptSeen = true;
+    } else if (!scriptSeen && !a.startsWith("-")) {
+      scriptSeen = true;
+    } else {
+      words.push(a);
+    }
+  }
+  return { words, scripts };
+}
+function stringLiterals(script) {
+  const literals = [];
+  const unclosed = /* @__PURE__ */ new Set();
+  let i = 0;
+  while (i < script.length) {
+    tick();
+    const quote = script[i];
+    if (!QUOTES.has(quote) || unclosed.has(quote)) {
+      i++;
+      continue;
+    }
+    let j = i + 1;
+    while (j < script.length && script[j] !== quote) {
+      tick();
+      j += quote === '"' && script[j] === "\\" ? 2 : 1;
+    }
+    if (j >= script.length) {
+      unclosed.add(quote);
+      i++;
+      continue;
+    }
+    literals.push(script.slice(i + 1, j));
+    i = j + 1;
+  }
+  return literals;
+}
+var LITERALS = /* @__PURE__ */ new WeakMap();
+function partLiterals(part) {
+  const known = LITERALS.get(part);
+  if (known !== void 0) return known;
+  const literals = part.name === null || !isInterpreter2(part.name) ? [] : scriptsOf(part, part.name).flatMap(stringLiterals);
+  LITERALS.set(part, literals);
+  return literals;
+}
+function scriptsOf(part, name) {
+  return [...wordsOf(part, name).scripts, ...part.stdinScripts];
+}
+function literalsOf(part) {
+  return [...new Set(partLiterals(part).filter((literal2) => literal2 !== ""))];
+}
+function matchesOutsideRoot(glob) {
+  return glob.startsWith("~/") || glob.startsWith("**/") || import_node_path22.default.isAbsolute(glob);
+}
+function namedInScript(literals, dir, ctx) {
+  const tails = ctx.settings.protectedPaths.filter(matchesOutsideRoot).map((glob) => `**/${glob.startsWith("~/") ? glob.slice(2) : glob}`);
+  for (const literal2 of literals) {
+    const named2 = namedPath(literal2, dir, ctx);
+    if (named2 !== null) return named2;
+    const tail = import_node_path22.default.posix.normalize(`/${literal2}`);
+    if (ctx.places.some((at) => matchAnyPath(tails, tail, at))) return literal2;
+  }
+  return null;
+}
+var MAX_CALL_WORDS2 = 2048;
+function stdinScriptChars(part) {
+  return part.name === null || !isInterpreter2(part.name) ? 0 : part.stdinScripts.reduce((n, script) => n + script.length, 0);
+}
+function checkCallSize(parts) {
+  const chars = parts.reduce((n, part) => n + stdinScriptChars(part), 0);
+  if (chars > MAX_CALL_CHARS) {
+    return {
+      rule: "protected-path-mention",
+      reason: `Refused: this command is too complex for the gate to check (scripts fed on stdin longer than ${MAX_CALL_CHARS / 1024} KB in all); split it into simpler commands.`
+    };
+  }
+  const words = parts.reduce((n, part) => n + Math.max(1, part.words.length + part.writeTargets.length + partLiterals(part).length), 0);
+  if (words <= MAX_CALL_WORDS2) return null;
+  return {
+    rule: "protected-path-mention",
+    reason: `Refused: this command has too many words for the gate to check (over ${MAX_CALL_WORDS2}). Split it into shorter commands.`
+  };
+}
+var OUTPUT_NAMES = /* @__PURE__ */ new Set([
+  "out",
+  "output",
+  "outfile",
+  "outputfile",
+  "outdir",
+  "outputdir",
+  "report",
+  "reportpath",
+  "junit",
+  "junitxml",
+  "coverprofile",
+  "dest",
+  "write",
+  "logfile",
+  "outputpath",
+  "reportdir",
+  "coveragedir",
+  "declarationdir"
+]);
+var OUTPUT_OPTION = /^--?([A-Za-z][A-Za-z_-]*)(?:=([\s\S]*))?$/;
+var PROGRAM_WRITE_OPTIONS = /* @__PURE__ */ new Map([["prettier", ["-w"]]]);
+var OUTPUT_SHORT = /^-[A-Za-z]*o$/;
+var OUTPUT_ATTACHED = /^-o(.+)$/;
+function outputName(word) {
+  const match = OUTPUT_OPTION.exec(word);
+  if (match === null) return null;
+  const name = match[1].toLowerCase().replace(/[-_]/g, "");
+  return OUTPUT_NAMES.has(name) ? { name, value: match[2] } : null;
+}
+function outputValues2(words, settings) {
+  const values = [];
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i];
+    const named2 = outputName(w);
+    if (named2 !== null) {
+      const value = named2.value ?? (i + 1 < words.length ? words[++i] : void 0);
+      if (value !== void 0) values.push({ value, folder: named2.name.endsWith("dir") });
+    } else if (OUTPUT_SHORT.test(w) && i + 1 < words.length) values.push({ value: words[++i], folder: false });
+    else if (OUTPUT_ATTACHED.test(w)) values.push({ value: w.slice(2), folder: false });
+  }
+  const writeOptions = (settings.reviewWriteOptions ?? []).filter((o) => o.startsWith("-") && !o.includes(" "));
+  const programOptions = words.flatMap((w) => PROGRAM_WRITE_OPTIONS.get(import_node_path22.default.basename(w)) ?? []);
+  if (words.some((w) => writeOptions.includes(w) || programOptions.includes(w))) {
+    values.push(...words.slice(1).filter((w) => !w.startsWith("-")).map((value) => ({ value, folder: false })));
+  }
+  return values;
+}
+function lostTailNamed(part, written, ctx) {
+  if (part.lostDir === null || part.name === null || safeInProtectedFolder(part, part.name)) return null;
+  const relative = written.filter(
+    ({ value: w, folder }) => (folder || /[./]/.test(w)) && !w.startsWith("-") && !w.startsWith("~") && !import_node_path22.default.isAbsolute(w) && !w.includes(UNKNOWN)
+  );
+  const globOf2 = ({ value, folder }) => {
+    const glob = part.globs.get(value) ?? escapeGlob(value);
+    return folder ? `${glob.replace(/\/+$/, "")}/*` : glob;
+  };
+  const contents = (w) => part.lostDir?.pattern === null && part.git === null && !w.includes("://");
+  return relative.find((w) => ctx.places.some((at) => tailMayBeProtected(globOf2(w), ctx.settings.protectedPaths, at, part.dotGlob, contents(w.value))))?.value ?? null;
+}
+function checkProtectedPathMention(part, settings, root, home, paths, caseInsensitive = false, places) {
+  if (part.program === null || part.name === null) return null;
+  const { name } = part;
+  const readOnly = isReadOnly(part, name);
+  if (readOnly && !SED_NAMES2.has(name) && !AWK_NAMES2.has(name) || part.git?.subcommand === "clean") return null;
+  const ctx = { settings, places: places ?? placesOf(root, home, paths, caseInsensitive), paths, home };
+  const dir = part.git?.dir ?? part.cwd;
+  const here = safeInProtectedFolder(part, name) ? null : namedPath(dir, "/", ctx);
+  if (here !== null) {
+    return {
+      rule: "protected-path-mention",
+      reason: `Refused: \`${name}\` runs in \`${displayPath(here, root, home)}\`, which holds protected paths, and only read-only programs may run there. Ask the user to run it with \`!\`.`
+    };
+  }
+  const lost = part.lostDir?.pattern ?? null;
+  if (lost !== null && patternReachesProtected(lost, settings, ctx.places, paths, true, part.dotGlob)) {
+    return {
+      rule: "protected-path-mention",
+      reason: `Refused: \`${name}\` runs after \`${part.lostDir?.why}\`, which could be a protected folder, and only read-only programs may run there. Ask the user to run it with \`!\`.`
+    };
+  }
+  if (readOnly) return null;
+  const given = wordsOf(part, name);
+  const words = [...given.words, ...part.assignmentValues];
+  const literals = literalsOf(part);
+  if (words.flatMap(valuesOf).some(isTooLong) || literals.some(isTooLong)) return TOO_LONG;
+  if (part.lostDir !== null && part.lostDir.pattern === null && writesIntoCwd(part, name)) {
+    return {
+      rule: "protected-path-mention",
+      reason: `Refused: \`${name}\` writes into its folder after \`${part.lostDir.why}\`, a folder the gate can't follow. Run it after a \`cd\` to a plain path.`
+    };
+  }
+  const found2 = foundPath(part, ctx, dir);
+  if (found2 !== null) {
+    return {
+      rule: "protected-path-mention",
+      reason: `Refused: this \`find\` deletes, writes or runs a command from \`${displayPath(found2, root, home)}\`, which holds protected paths. Start it from a folder that holds none, or ask the user to run it with \`!\`.`
+    };
+  }
+  const named2 = words.flatMap(valuesOf).map((w) => namedPath(w, dir, ctx, !FOLDER_MAKERS.has(name))).find((p) => p !== null) ?? words.map((w) => namedPattern(part, w, dir, ctx)).find((p) => p !== null) ?? namedInScript(literals, dir, ctx);
+  const lostNamed = named2 === null ? lostTailNamed(part, [...outputValues2(words, settings), ...literals.map((value) => ({ value, folder: false }))], ctx) : null;
+  if (lostNamed !== null) {
+    return {
+      rule: "protected-path-mention",
+      reason: `Refused: \`${name}\` names \`${lostNamed}\` after \`${part.lostDir?.why}\`, in a folder the gate can't follow, where it could be a protected path. Instead, ${LOST_CD_HINT}, or ask the user to run it with \`!\`.`
+    };
+  }
+  if (named2 === null) return null;
+  const shown2 = import_node_path22.default.isAbsolute(named2) ? displayPath(named2, root, home) : named2;
+  if (SCRIPT_LAUNCHERS.has(name)) {
+    return {
+      rule: "protected-path-mention",
+      reason: `Refused: \`${name}\` runs a script that names a protected path: \`${shortened(launchedScript(name, part.words))}\`. Ask the user to run it with \`!\`.`
+    };
+  }
+  return {
+    rule: "protected-path-mention",
+    reason: `Refused: \`${name}\` names \`${shown2}\`, a protected path, and only read-only programs may. To read it, use the Read tool or \`cat ${shown2} | ${name}\`. Ask the user to run it with \`!\`.`
+  };
+}
+
+// src/tool-gate/rules/verdict-capture-call.ts
+var import_node_path23 = __toESM(require("node:path"), 1);
+var NAMES = ["oss-verdict-capture.sh", "verdict-capture.cjs", "verdict-capture.js"];
+var SEPARATORS = /[\s'"`;|&()<>=${}\\,]+/;
+var GLOB = /[*?[]/;
+var SET = /\[[!^]?\]?[^\]]*\]?/;
+var FORM_END = /[\s;|&()<>'"`${}]/;
+function specialSetsAsAny(text) {
+  const closing = /* @__PURE__ */ new Map();
+  const closeOf = (delim, from) => {
+    const cached = closing.get(delim);
+    if (cached !== void 0 && (cached === -1 || cached >= from)) return cached;
+    const at = text.indexOf(`${delim}]`, from);
+    closing.set(delim, at);
+    return at;
+  };
+  let wordEnd = -1;
+  const wordEndOf = (from) => {
+    if (wordEnd >= from) return wordEnd;
+    wordEnd = from;
+    while (wordEnd < text.length && !FORM_END.test(text[wordEnd])) wordEnd += 1;
+    return wordEnd;
+  };
+  let out = "";
+  let i = 0;
+  while (i < text.length) {
+    if (text[i] !== "[") {
+      out += text[i];
+      i += 1;
+      continue;
+    }
+    let j = i + 1;
+    if (text[j] === "!" || text[j] === "^") j += 1;
+    if (text[j] === "]") j += 1;
+    let special = false;
+    for (; j < text.length && text[j] !== "]" && !FORM_END.test(text[j]); j += 1) {
+      if (text[j] === "\\") {
+        special = true;
+        if (j + 1 < text.length && !FORM_END.test(text[j + 1])) j += 1;
+      } else if (text[j] === "[" && ":=.".includes(text[j + 1] ?? "x")) {
+        const at = closeOf(text[j + 1], j + 2);
+        if (at >= 0 && at < wordEndOf(j + 2)) {
+          special = true;
+          j = at + 1;
+        }
+      }
+    }
+    if (text[j] !== "]") {
+      out += text.slice(i, j);
+      i = j;
+    } else {
+      out += special ? "?" : text.slice(i, j + 1);
+      i = j + 1;
+    }
+  }
+  return out;
+}
+function globTokens(piece, anySet = false) {
+  const tokens = [];
+  for (const m of (anySet ? strayCloseAsStar(piece) : piece).matchAll(new RegExp(`${SET.source}|[*?]|[^*?[]`, "g"))) {
+    const c = m[0];
+    if (c === "*") tokens.push("*");
+    else if (c === "?" || c.startsWith("[") && (anySet || c.length < 2 || !c.endsWith("]") || /^\[[!^]?\]$/.test(c))) {
+      tokens.push(() => true);
+    } else if (c.startsWith("[")) tokens.push(bracketTest(c.slice(1, -1)));
+    else tokens.push((x) => x === c);
+  }
+  return tokens;
+}
+function strayCloseAsStar(piece) {
+  const open = piece.indexOf("[");
+  if (open < 0) return piece;
+  const set = new RegExp(SET.source, "y");
+  set.lastIndex = open;
+  const first = set.exec(piece);
+  const afterSet = first === null ? -1 : piece.indexOf("]", open + first[0].length);
+  const nextOpen = first === null ? -1 : piece.indexOf("[", open + first[0].length);
+  if (first === null || !first[0].endsWith("]") || afterSet < 0 || nextOpen >= 0 && nextOpen < afterSet) return piece;
+  return `${piece.slice(0, open)}*${piece.slice(piece.lastIndexOf("]") + 1)}`;
+}
+function bracketTest(body) {
+  const negate = body.startsWith("!") || body.startsWith("^");
+  const set = negate ? body.slice(1) : body;
+  return (c) => {
+    let hit = false;
+    for (let i = 0; i < set.length; i += 1) {
+      if (set[i + 1] === "-" && i + 2 < set.length) {
+        if (c >= set[i] && c <= set[i + 2]) hit = true;
+        i += 2;
+      } else if (set[i] === c) hit = true;
+    }
+    return hit !== negate;
+  };
+}
+function globMatch(tokens, name) {
+  let t = 0;
+  let s = 0;
+  let star = -1;
+  let starS = 0;
+  while (s < name.length) {
+    const token = tokens[t];
+    if (token === "*") {
+      star = t;
+      starS = s;
+      t += 1;
+    } else if (token !== void 0 && token(name[s])) {
+      t += 1;
+      s += 1;
+    } else if (star >= 0) {
+      t = star + 1;
+      starS += 1;
+      s = starS;
+    } else return false;
+  }
+  while (tokens[t] === "*") t += 1;
+  return t === tokens.length;
+}
+function globNames(piece, folder) {
+  const tokens = globTokens(piece, true);
+  if (!NAMES.some((name) => globMatch(tokens, name))) return false;
+  const literals = piece.split(new RegExp(`${SET.source}|[*?]`));
+  return literals.some(writesStem) || folder !== void 0 && /^(?:hooks|cli)$/.test(folder);
+}
+function writesStem(literal2) {
+  if (literal2.length < 3) return false;
+  return NAMES.some((name) => {
+    const stemEnd = name.lastIndexOf(".");
+    for (let at = name.indexOf(literal2); at >= 0; at = name.indexOf(literal2, at + 1)) {
+      if (Math.min(at + literal2.length, stemEnd) - at >= 3) return true;
+    }
+    return false;
+  });
+}
+function hasLiteralName(text) {
+  return text.split(SEPARATORS).some((word) => word.split("/").some((segment) => NAMES.includes(segment)));
+}
+function namesVerdictCapture(text) {
+  const lower = text.toLowerCase();
+  if (hasLiteralName(lower)) return true;
+  for (const word of specialSetsAsAny(lower).split(SEPARATORS)) {
+    const segments = word.split("/");
+    for (const [i, segment] of segments.entries()) {
+      if (GLOB.test(segment) && globNames(segment, segments[i - 1])) return true;
+    }
+  }
+  return false;
+}
+var FIND_RUNNERS = /* @__PURE__ */ new Set(["-exec", "-execdir", "-ok", "-okdir"]);
+var FIND_GLOBS = /* @__PURE__ */ new Set(["-name", "-iname", "-path", "-ipath", "-wholename", "-iwholename"]);
+var INTERPRETERS3 = /^(?:node|sh|bash|zsh|dash|python3?|perl|ruby|deno|bun|tsx|ts-node)$/;
+var ENV_ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
+function couldMatch(tokens, pieces, anchored) {
+  const closure = (at2) => {
+    for (const t of at2) if (tokens[t] === "*") at2.add(t + 1);
+    return at2;
+  };
+  const gap = (at2) => {
+    let from = Infinity;
+    for (const t of at2) if (t < from) from = t;
+    const all = /* @__PURE__ */ new Set();
+    for (let t = from; t <= tokens.length; t += 1) all.add(t);
+    return all;
+  };
+  let at = closure(/* @__PURE__ */ new Set([0]));
+  if (!anchored) at = gap(at);
+  for (const [k, piece] of pieces.entries()) {
+    if (k > 0) at = gap(at);
+    for (const c of piece) {
+      const next = /* @__PURE__ */ new Set();
+      for (const t of at) {
+        const token = tokens[t];
+        if (token === "*") next.add(t);
+        else if (token !== void 0 && token(c)) next.add(t + 1);
+      }
+      at = closure(next);
+      if (at.size === 0) return false;
+    }
+  }
+  return at.has(tokens.length);
+}
+function globCouldPickProtected(test, glob) {
+  const tokens = globTokens(glob.toLowerCase(), true);
+  const whole = test === "-name" || test === "-iname";
+  return [...NAMES.map((name) => [name]), ["oss-", ".sh"]].some(
+    (pieces) => couldMatch(tokens, whole ? pieces : [`/${pieces[0]}`, ...pieces.slice(1)], whole)
+  );
+}
+function runsFound(words) {
+  let i = 0;
+  if (words[0] === "env") {
+    i = 1;
+    while (i < words.length && (words[i].startsWith("-") || ENV_ASSIGNMENT.test(words[i]))) i += 1;
+  }
+  const program = words[i];
+  if (program === void 0) return false;
+  if (program.includes("{}")) return true;
+  if (!INTERPRETERS3.test(program.split("/").pop() ?? "")) return false;
+  const script = words.slice(i + 1).find((w) => !w.startsWith("-") && w !== "run");
+  return script?.includes("{}") ?? false;
+}
+var FOLLOWS_LINKS = /^(?:-[HLPEXdsx]*[HL][HLPEXdsx]*|-follow)$/;
+function findReachesProtected(part, at) {
+  const args = part.words.slice(1);
+  if (args.some((w) => FOLLOWS_LINKS.test(w))) return true;
+  const folders = [at.pluginRoot, import_node_path23.default.join(at.home, ".oss")].filter((f) => import_node_path23.default.isAbsolute(f)).flatMap((f) => formsOf(f, at.paths));
+  return findStarts(args).some((start) => {
+    if (start.includes(UNKNOWN) || part.cwd.includes(UNKNOWN) || part.lostDir !== null && !start.startsWith("/")) return true;
+    return formsOf(joinRaw(part.cwd, expandTilde3(start, at.home)), at.paths).some(
+      (form) => folders.some((f) => isSameOrAncestor(form, f, at.caseInsensitive) || isSameOrAncestor(f, form, at.caseInsensitive))
+    );
+  });
+}
+function findRunsProtected(part, at) {
+  if (part.name !== "find") return false;
+  const words = part.words;
+  if (!findReachesProtected(part, at)) return false;
+  if (!words.some((word, i) => FIND_GLOBS.has(words[i - 1] ?? "") && globCouldPickProtected(words[i - 1], word))) return false;
+  for (let i = 1; i < words.length; i += 1) {
+    if (!FIND_RUNNERS.has(words[i])) continue;
+    const end = words.findIndex((w, k) => k > i && (w === ";" || w === "+"));
+    if (runsFound(words.slice(i + 1, end === -1 ? words.length : end))) return true;
+    if (end === -1) break;
+    i = end;
+  }
+  return false;
+}
+function checkVerdictCaptureCall(part, command, at) {
+  if (findRunsProtected(part, at)) {
+    return {
+      rule: "protected-path",
+      reason: "Refused: this `find` runs the files it finds, and its name or path test could pick a protected OSS script (the verdict capture or an OSS hook). Run a file you name in full, or ask the user to run it with `!`."
+    };
+  }
+  const texts = [command, ...part.words, ...part.assignmentValues, ...part.stdinScripts];
+  if (!texts.some(namesVerdictCapture)) return null;
+  return {
+    rule: "protected-path",
+    reason: "Refused: runs or names the OSS verdict capture (`oss-verdict-capture.sh`, `verdict-capture.cjs`, `verdict-capture.js`). Only Claude Code's own subagent hook runs it; a review verdict is captured when the review agent stops."
+  };
+}
+
+// src/tool-gate/rules/oss-hook-env.ts
 var HOOK_FILE = /\/\.oss\/hooks\/[^/]|\/\.claude\/plugins\/cache\/.*\/hooks\/[^/]|(?:^|\/)hooks\/oss-[^/]*\.sh$/i;
 var HOOKS_PART = /(?:^|\/)hooks\/[^/]/i;
 var PLUGIN_HOOK = /\$\{?CLAUDE_PLUGIN_ROOT\}?\/hooks\/[^/]/;
@@ -8129,11 +8957,26 @@ function optionName2(word) {
 var SERVED_OPTIONS = /* @__PURE__ */ new Set(["pipefail", "errexit", "unset", "xtrace", "clobber"]);
 var RESERVED = /* @__PURE__ */ new Set(["if", "then", "else", "elif", "do", "while", "until", "{", "!", "time"]);
 var SETTING_WORD = /^(?:HOME|PATH|path)(?:$|\[[^\]]*\])?(?:\+?=|$)/;
-var SCRIPT_FLAG = /^-[A-Za-z]*c$/;
-var NAME_SETTERS2 = /* @__PURE__ */ new Set(["declare", "typeset", "export", "local", "readonly", "read", "integer", "float"]);
-var NAMEREF_SETTERS = /* @__PURE__ */ new Set(["declare", "typeset", "local"]);
+var SCRIPT_FLAG2 = /^-[A-Za-z]*c$/;
+var NAME_SETTERS2 = /* @__PURE__ */ new Set(["declare", "typeset", "export", "local", "readonly", "read", "integer", "float", "private", "vared", "getln"]);
+var NAMEREF_SETTERS = /* @__PURE__ */ new Set(["declare", "typeset", "local", "private"]);
 var OPERAND_SETTERS = /* @__PURE__ */ new Set([...NAME_SETTERS2, "let", "env"]);
 var PREFIXES = /* @__PURE__ */ new Set(["builtin", "command", "noglob", "nocorrect", "-"]);
+function isEnvProgram(word) {
+  if (word.includes(UNKNOWN)) return false;
+  return hasGlobClass(word) || globMatches(word.slice(word.lastIndexOf("/") + 1), "env");
+}
+function hasGlobClass(word) {
+  const base = word.slice(word.lastIndexOf("/") + 1);
+  return base.lastIndexOf("]") > base.indexOf("[") + 1 && base.includes("[");
+}
+function isArchProgram(word) {
+  if (word.includes(UNKNOWN)) return false;
+  return hasGlobClass(word) || globMatches(word.slice(word.lastIndexOf("/") + 1), "arch");
+}
+function isEnvPiece(piece) {
+  return isEnvProgram(piece) || isArchProgram(piece) || isLaunchctlProgram(piece);
+}
 var MAX_DEPTH = 5;
 function setsRefusedVariable(text, depth, call) {
   if (depth > MAX_DEPTH || expansionSet(text, (name) => !HOOK_CALL_VARIABLES.has(name)) !== null || arithmeticReadsVariable(text)) return true;
@@ -8174,7 +9017,8 @@ function setsUnlisted(words) {
   const assigned = [];
   while (p < words.length && ASSIGNMENT3.test(words[p])) assigned.push(words[p++]);
   while (PREFIXES.has(words[p])) p++;
-  const [name, ...args] = words.slice(p);
+  const [written, ...args] = words.slice(p);
+  const name = written !== void 0 && isEnvProgram(written) ? "env" : written;
   if (name === void 0 || name === "for" || name === "select") {
     const plain = name === void 0 ? assigned : [...assigned, args[0] ?? ""];
     return plain.some((w) => (MAYBE_EXPORTED.test(variableOf(w)) || COMMAND_MAPS.test(variableOf(w))) && unlisted(w));
@@ -8184,6 +9028,13 @@ function setsUnlisted(words) {
   else if (name === "printf" || name === "print") args.forEach((a, i) => a === "-v" ? names.push(args[i + 1] ?? "") : /^-v./.test(a) && names.push(a.slice(2)));
   else if (name === "mapfile" || name === "readarray") names.push(...arrayOperands(args));
   else if (name === "getopts") names.push(args[1] ?? "");
+  else if (name === "zparseopts") {
+    args.forEach((a, i) => {
+      if (a === "-A" || a === "-a") names.push(args[i + 1] ?? "");
+      else if (/^-[aA]./.test(a)) names.push(a.slice(2));
+      if (a.includes("=")) names.push(a.slice(a.indexOf("=") + 1));
+    });
+  }
   return names.some(unlisted);
 }
 function unlisted(word) {
@@ -8257,6 +9108,21 @@ function setsFromElsewhere(words, depth, call, raws) {
   if (name === "trap") return args.some((a) => !a.startsWith("-") && setsRefusedVariable(a, depth + 1, call));
   return false;
 }
+function piecesSet(word) {
+  if (!/\s/.test(word)) return false;
+  const assigned = ASSIGNMENT3.exec(word);
+  const pieces = (assigned === null ? word : word.slice(assigned[0].length)).split(/\s+/).filter(Boolean);
+  let laterSetsForEnv = false;
+  let laterSetsForSetter = false;
+  for (let i = pieces.length - 1; i >= 0; i -= 1) {
+    const p = pieces[i];
+    if (isEnvPiece(p) ? laterSetsForEnv : OPERAND_SETTERS.has(p) && laterSetsForSetter) return true;
+    const assigns = ASSIGNMENT3.test(p) && unlisted(p);
+    laterSetsForEnv ||= assigns || p.startsWith("-");
+    laterSetsForSetter ||= assigns || SETTING_WORD.test(p);
+  }
+  return false;
+}
 function tokensSet(tokens, depth, call, text) {
   let previous = null;
   let words = [];
@@ -8279,8 +9145,8 @@ function tokensSet(tokens, depth, call, text) {
       const body = heredocBodyOf(token);
       if (body !== void 0 && setsRefusedVariable(body, depth + 1, call)) return true;
     } else if (token.kind === "word") {
-      if (SETTING_WORD.test(token.value)) return true;
-      if (previous !== null && (previous === "eval" || SCRIPT_FLAG.test(previous)) && setsRefusedVariable(token.value, depth + 1, call)) return true;
+      if (SETTING_WORD.test(token.value) || piecesSet(token.value)) return true;
+      if (previous !== null && (previous === "eval" || SCRIPT_FLAG2.test(previous)) && setsRefusedVariable(token.value, depth + 1, call)) return true;
       previous = token.value;
     } else {
       previous = null;
@@ -8289,65 +9155,310 @@ function tokensSet(tokens, depth, call, text) {
   return setsIndirectly(words) || setsUnlisted(words) || setsFromElsewhere(words, depth, call, raws);
 }
 var HOOK_PATH_NAMES = [".oss", "hooks", ".claude", "plugins", "cache", "oss-x.sh"];
-var GLOB = /[*?[]/;
+var GLOB2 = /[*?[]/;
 var MAX_GLOB_READINGS = 256;
 function globMatches(part, name) {
   if (name.startsWith(".") && !part.startsWith(".")) return false;
-  const pattern = part.replace(/\[[^\]]*\]?|[*?]|[^*?[]/g, (c) => c === "*" ? ".*" : c === "?" || c.startsWith("[") ? "." : c.replace(/[.*+?^${}()|\\]/g, "\\$&"));
-  return new RegExp(`^${pattern}$`, "i").test(name);
+  return globMatch(globTokens(specialSetsAsAny(part.toLowerCase()), true), name.toLowerCase());
 }
 function globReadings(word) {
   let readings = [];
   for (const [i, part] of word.split("/").entries()) {
-    const options = GLOB.test(part) ? [part, ...HOOK_PATH_NAMES.filter((n) => globMatches(part, n)), ...part === "**" ? ["plugins/cache"] : []] : [part];
+    const options = GLOB2.test(part) ? [part, ...HOOK_PATH_NAMES.filter((n) => globMatches(part, n)), ...part === "**" ? ["plugins/cache"] : []] : [part];
     readings = i === 0 ? options : readings.flatMap((r) => options.map((o) => `${r}/${o}`));
     if (readings.length > MAX_GLOB_READINGS) return null;
   }
   return readings;
 }
-function namesHook(word, cwd) {
-  const readings = GLOB.test(word) ? globReadings(word) : [word];
-  return readings === null || readings.some((w) => HOOK_FILE.test(w) || inPluginCheckout(w, cwd));
+function namesHook(word, cwd, home) {
+  const readings = GLOB2.test(word) ? globReadings(word) : [word];
+  return readings === null || readings.some((w) => HOOK_FILE.test(w) || inPluginCheckout(w, cwd)) || unknownCouldBeHook(word, home);
+}
+var HOOK_UNDER = /\/\.oss\/hooks\/[^/]|\/\.claude\/plugins\/cache\/.*\/hooks\/[^/]/i;
+var HOOK_HOME_STARTS = ["~/.oss/hooks/", "~/.claude/plugins/cache/"];
+function unknownCouldBeHook(word, home) {
+  if (!word.includes(UNKNOWN)) return false;
+  const fromHome = word.startsWith(`${home}/`) ? `~${word.slice(home.length)}` : word;
+  const known = fromHome.slice(0, fromHome.indexOf(UNKNOWN)).toLowerCase();
+  const atHome = fromHome.startsWith("~/") && HOOK_HOME_STARTS.some((start) => start.startsWith(known) || known.startsWith(start));
+  if (atHome) return true;
+  if (!/\.oss|\.claude/i.test(word.split(UNKNOWN).join(""))) return false;
+  const glob = word.split(UNKNOWN).join("*");
+  const tails = word.split("/").pop()?.includes(UNKNOWN) ? ["", "/*/x"] : [""];
+  return tails.some((tail) => {
+    const readings = globReadings(glob + tail);
+    return readings === null || readings.some((w) => HOOK_UNDER.test(w));
+  });
 }
 function inPluginCheckout(word, cwd) {
   const hooks = HOOKS_PART.exec(word);
   if (hooks === null) return false;
-  let dir = import_node_path21.default.dirname(import_node_path21.default.resolve(cwd, word.slice(0, hooks.index + hooks[0].length - 1)));
+  let dir = import_node_path24.default.dirname(import_node_path24.default.resolve(cwd, word.slice(0, hooks.index + hooks[0].length - 1)));
   for (; ; ) {
-    if (import_node_fs13.default.existsSync(import_node_path21.default.join(dir, ".claude-plugin", "plugin.json"))) return true;
-    const up = import_node_path21.default.dirname(dir);
+    if (import_node_fs14.default.existsSync(import_node_path24.default.join(dir, ".claude-plugin", "plugin.json"))) return true;
+    const up = import_node_path24.default.dirname(dir);
     if (up === dir) return false;
     dir = up;
   }
 }
-function partNamesHook(part) {
+function partNamesHook(part, home) {
   const lost = part.lostDir !== null && part.lostDir.plainKnown !== true;
   if (lost && lostWordsCouldBeHook(part.words)) return true;
-  return [...part.words, ...part.assignmentValues].some((w) => {
-    if (namesHook(w, part.cwd)) return true;
-    if (lost || /^[/~-]/.test(w)) return false;
-    return namesHook(import_node_path21.default.resolve(part.cwd, w), part.cwd);
-  });
+  return [...part.words, ...part.assignmentValues].some((w) => wordNamesHook(w, part.cwd, !lost, home));
 }
-var SCRIPT_RUNNERS = /* @__PURE__ */ new Set(["bash", "sh", "zsh", "dash", ".", "source"]);
+function wordNamesHook(word, cwd, relative, home) {
+  return namesHook(word, cwd, home) || relative && !/^[/~-]/.test(word) && namesHook(import_node_path24.default.resolve(cwd, word), cwd, home);
+}
+var SCRIPT_RUNNERS2 = /* @__PURE__ */ new Set(["bash", "sh", "zsh", "dash", ".", "source"]);
 function lostWordsCouldBeHook(words) {
-  const script = SCRIPT_RUNNERS.has(words[0]) ? words.findIndex((w, i) => i > 0 && !w.startsWith("-")) : -1;
+  const script = SCRIPT_RUNNERS2.has(words[0]) ? words.findIndex((w, i) => i > 0 && !w.startsWith("-")) : -1;
   return words.some((w, i) => couldBeOssHook(w, i === 0 || i === script));
 }
 function couldBeOssHook(word, runs) {
   const parts = word.split("/");
   const last = parts[parts.length - 1].toLowerCase();
   const bare = parts.length === 1 || parts.length === 2 && parts[0] === ".";
-  const literal2 = last.split(GLOB)[0];
-  const ossName = GLOB.test(last) ? literal2.startsWith("oss-") || "oss-".startsWith(literal2) : last.startsWith("oss-");
+  const literal2 = last.split(GLOB2)[0];
+  const ossName = GLOB2.test(last) ? literal2.startsWith("oss-") || "oss-".startsWith(literal2) : last.startsWith("oss-");
   if (bare && ossName) return true;
   if (!runs) return false;
-  const hookFolder = parts.some((p) => ["hooks", ".oss"].some((name) => GLOB.test(p) ? globMatches(p, name) : p.toLowerCase() === name));
+  const hookFolder = parts.some((p) => ["hooks", ".oss"].some((name) => GLOB2.test(p) ? globMatches(p, name) : p.toLowerCase() === name));
   return hookFolder || parts[parts.length - 1].includes(UNKNOWN);
 }
+var SPLIT_REF = /^"?(?:\$=?([A-Za-z_][A-Za-z0-9_]*|[@*])(?:\[[^\]]*\])?|\$\{=?([A-Za-z_][A-Za-z0-9_]*|[@*])(?:\[[^\]]*\])?\})"?$/;
+var OTHER_OPERATOR = /^"?\$\{(?![A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]*\])?\})/;
+var DEFAULT_REF = /^"?\$\{([A-Za-z_][A-Za-z0-9_]*):?[-=]([\s\S]*)\}"?$/;
+var SERVED_ROOT = /^"?\$\{(CLAUDE_PLUGIN_ROOT)(?::-((?:\$HOME(?![A-Za-z0-9_])|\$\{HOME\})?[A-Za-z0-9._/@:,=+-]*)|(%\/))\}(\/hooks\/[A-Za-z0-9._-]+)"?$/;
+var LEADING_REF = /^\$(?:([A-Za-z_][A-Za-z0-9_]*)|\{([A-Za-z_][A-Za-z0-9_]*)\})(?![A-Za-z0-9_[])/;
+var UNREAD_SETTERS = /* @__PURE__ */ new Set(["for", "select", "printf", "print", "getopts", "let"]);
+var ARRAY_START = /^([A-Za-z_][A-Za-z0-9_]*)(\+?)=$/;
+var FROM_FILE = /* @__PURE__ */ Symbol("from a file");
+var UNREAD = /* @__PURE__ */ Symbol("not read");
+var HOOK_HINT = /\.oss|hooks/i;
+function readsFile(script) {
+  const end = script.findIndex((t) => t.kind === "op");
+  const command = end === -1 ? script : script.slice(0, end);
+  const words = command.flatMap((t) => t.kind === "word" ? [t.value] : []);
+  if (words.length === 0) return command.some((t) => t.kind === "redirect" && t.op === "<");
+  return words[0] === "cat" && words.slice(1).some((w) => !w.startsWith("-"));
+}
+function wordReadsFile(token) {
+  return token.kind !== "op" && token.scripts !== void 0 && token.scripts.some(readsFile);
+}
+function filled(token, text, values, home) {
+  if (token.kind !== "word") return "";
+  if (!token.value.includes(UNKNOWN)) return token.value;
+  const at = sourceOf(token);
+  const refs = text === null || at === void 0 ? null : variableReferences(text.slice(at.start, at.end), home);
+  const texts = token.value.split(UNKNOWN);
+  if (refs === null || refs.length !== texts.length - 1) return token.value;
+  return texts.reduce((out, t, n) => {
+    const value = n === 0 ? void 0 : values.get(refs[n - 1].name);
+    return out + (n === 0 ? "" : typeof value === "string" ? value : UNKNOWN) + t;
+  }, "");
+}
+function record(values, token, text, home) {
+  if (token.kind !== "word") return;
+  const assigned = ASSIGNMENT3.exec(token.value);
+  if (assigned === null) return;
+  const value = filled(token, text, values, home);
+  values.set(assigned[1], wordReadsFile(token) ? FROM_FILE : /[[+]/.test(assigned[0]) ? UNREAD : value.slice(value.indexOf("=") + 1));
+}
+function programIndex(words, from) {
+  let i = from;
+  for (let n = 0; n < 64 && i < words.length; n++) {
+    const spec = WRAPPER_WORDS.get(words[i]);
+    if (spec === void 0) return i;
+    i++;
+    let operands2 = spec.operands ?? 0;
+    while (i < words.length) {
+      const w = words[i];
+      if (w === "--") {
+        i++;
+        break;
+      }
+      if (w.length > 1 && w.startsWith("-") && !w.includes(UNKNOWN)) i += spec.values.includes(w) ? 2 : 1;
+      else if (spec.assignments === true && ASSIGNMENT3.test(w)) i++;
+      else if (operands2-- > 0) i++;
+      else break;
+    }
+  }
+  return i;
+}
+function valueVerdict(value, cwd, command, call) {
+  const pieces = value.split(/\s+/).filter(Boolean);
+  const unknown = value.includes(UNKNOWN);
+  const hook = pieces.some((p) => wordNamesHook(p, cwd, true, call.home) || p.includes(UNKNOWN) && HOOK_HINT.test(p));
+  if (unknown && piecesSet(value)) return "hook";
+  if (!hook) return "ok";
+  const sets = pieces.some(isEnvPiece) || !unknown && setsRefusedVariable(value, 0, call) || setsRefusedVariable(command, 0, call);
+  return sets ? "hook" : "ok";
+}
+function programVerdict(token, after, text, values, cwd, command, call) {
+  if (token.kind !== "word" || !token.value.includes(UNKNOWN) && !token.value.startsWith("$=")) return "ok";
+  if (wordReadsFile(token)) return "unreadable";
+  const at = sourceOf(token);
+  if (text === null || at === void 0) return "ok";
+  const raw = text.slice(at.start, at.end);
+  if (/^"?(?:\$\(|`)/.test(raw)) return lineNamesHook(command, cwd, call.home) ? "unreadable" : "ok";
+  if (raw.includes("${!")) return "unreadable";
+  const split2 = SPLIT_REF.exec(raw);
+  const leading = split2 === null ? LEADING_REF.exec(raw) : null;
+  const withDefault = split2 === null && leading === null ? DEFAULT_REF.exec(raw) : null;
+  const withRest = split2 === null && leading === null && withDefault === null ? SERVED_ROOT.exec(raw) : null;
+  const name = split2?.[1] ?? split2?.[2] ?? leading?.[1] ?? leading?.[2] ?? withDefault?.[1] ?? withRest?.[1];
+  if (withDefault !== null && /[$`"'\\(<]/.test(withDefault[2])) return lineNamesHook(command, cwd, call.home) ? "unreadable" : "ok";
+  if (name === void 0) return OTHER_OPERATOR.test(raw) && lineNamesHook(command, cwd, call.home) ? "unreadable" : "ok";
+  const value = values.get(name);
+  const quoted = raw.startsWith('"');
+  if (value === FROM_FILE && !quoted) return "unreadable";
+  if (value === UNREAD || value === FROM_FILE && after.length > 0) return lineNamesHook(command, cwd, call.home) ? "unreadable" : "ok";
+  if (value === FROM_FILE) return "ok";
+  const words = " " + after.map((w) => filled(w, text, values, call.home)).join(" ");
+  const trimmed = typeof value === "string" && withRest?.[3] !== void 0 ? value.replace(/\/$/, "") : value;
+  const fallback = withDefault?.[2] ?? withRest?.[2];
+  const readings = [...typeof trimmed === "string" ? [trimmed] : [], ...fallback !== void 0 ? [fallback] : []];
+  const rest = leading !== null && token.value.startsWith(UNKNOWN) ? token.value.slice(UNKNOWN.length) : withRest?.[4] ?? "";
+  return readings.some((r) => valueVerdict(r + rest + words, cwd, command, call) === "hook") ? "hook" : "ok";
+}
+function lineNamesHook(command, cwd, home) {
+  return PLUGIN_HOOK.test(command) || command.replace(/['"]/g, "").split(/[\s;&|()<>]+/).some((p) => p !== "" && wordNamesHook(p, cwd, true, home));
+}
+function scanPrograms(tokens, text, values, cwd, command, call) {
+  let worst = "ok";
+  let words = [];
+  let redirects = [];
+  let array = null;
+  const worse2 = (verdict) => {
+    if (verdict === "hook" || verdict === "unreadable" && worst === "ok") worst = verdict;
+  };
+  const flush = () => {
+    const plain = words.map((w) => w.kind === "word" ? w.value : "");
+    let i = 0;
+    while (RESERVED.has(plain[i])) i++;
+    const start = i;
+    while (i < plain.length && ASSIGNMENT3.test(plain[i])) i++;
+    if (i === plain.length) words.slice(start).forEach((w) => record(values, w, text, call.home));
+    else {
+      const name = plain[i];
+      const operands2 = words.slice(i + 1).filter((w) => w.kind === "word" && !w.value.startsWith("-"));
+      if (name === "read") {
+        const here = redirects.find((r) => r.kind === "redirect" && r.op === "<<<");
+        const file = redirects.some((r) => r.kind === "redirect" && r.op === "<");
+        const heredoc = redirects.some((r) => r.kind === "redirect" && (r.op === "<<" || r.op === "<<-"));
+        const value = file ? FROM_FILE : heredoc ? UNREAD : operands2.length === 1 && here?.kind === "redirect" && !here.target.includes(UNKNOWN) ? here.target : null;
+        operands2.forEach((w) => w.kind === "word" && values.set(w.value, value));
+      } else if (NAME_SETTERS2.has(name)) {
+        operands2.forEach((w) => w.kind === "word" && ASSIGNMENT3.test(w.value) ? record(values, w, text, call.home) : w.kind === "word" && VARIABLE_NAME.test(w.value) && values.set(w.value, null));
+      } else if (name === "mapfile" || name === "readarray") operands2.forEach((w) => w.kind === "word" && VARIABLE_NAME.test(w.value) && values.set(w.value, UNREAD));
+      else if (UNREAD_SETTERS.has(name)) operands2.forEach((w) => w.kind === "word" && VARIABLE_NAME.test(w.value) && values.set(w.value, null));
+      else if (name === "set" && plain.includes("--", i)) {
+        const positional = words.slice(plain.indexOf("--", i) + 1).map((w) => filled(w, text, values, call.home)).join(" ");
+        values.set("@", positional);
+        values.set("*", positional);
+      }
+      const program = programIndex(plain, i);
+      if (program < words.length) worse2(programVerdict(words[program], words.slice(program + 1), text, values, cwd, command, call));
+    }
+    words = [];
+    redirects = [];
+  };
+  for (const token of tokens) {
+    if (token.kind !== "op" && token.scripts !== void 0) for (const script of token.scripts) worse2(scanPrograms(script, text, values, cwd, command, call));
+    if (array !== null) {
+      if (token.kind === "word") array.words.push(token);
+      else if (token.kind === "op" && token.value === ")") {
+        const elements = array.words;
+        values.set(array.name, elements.some(wordReadsFile) ? FROM_FILE : array.append ? null : elements.map((w) => filled(w, text, values, call.home)).join(" "));
+        array = null;
+      }
+      continue;
+    }
+    const last = words[words.length - 1];
+    const start = token.kind === "op" && token.value === "(" && last?.kind === "word" ? ARRAY_START.exec(last.value) : null;
+    if (start !== null) {
+      words.pop();
+      array = { name: start[1], append: start[2] === "+", words: [] };
+    } else if (token.kind === "op") flush();
+    else if (token.kind === "redirect") redirects.push(token);
+    else words.push(token);
+  }
+  flush();
+  return worst;
+}
+function programHidden(part) {
+  return part.program !== null && (part.program.includes(UNKNOWN) || part.program.startsWith("$="));
+}
+var lastScan = null;
+function commandScan(command, cwd, home, sources) {
+  if (lastScan !== null && lastScan.command === command && lastScan.cwd === cwd && lastScan.home === home && lastScan.sources === sources) return lastScan.verdict;
+  const call = { home, sources: sourcesFor(command, sources) };
+  const result = tokenize(command, home, new ReadBudget());
+  const verdict = scanPrograms(result.tokens, command, /* @__PURE__ */ new Map(), cwd, command, call);
+  lastScan = { command, cwd, home, sources, verdict };
+  return verdict;
+}
+function isLaunchctlProgram(word) {
+  if (word.includes(UNKNOWN)) return false;
+  return hasGlobClass(word) || globMatches(word.slice(word.lastIndexOf("/") + 1), "launchctl");
+}
+function archOrLaunchctlRuns(part, home) {
+  if (part.program === null || !(isArchProgram(part.program) || isLaunchctlProgram(part.program))) return false;
+  const words = part.words.slice(1);
+  const git = (w) => !w.includes(UNKNOWN) && globMatches(w.slice(w.lastIndexOf("/") + 1), "git");
+  const first = words.findIndex((w) => !w.startsWith("-"));
+  const starts = words.filter((w, i) => i === first || words[i - 1] === "--");
+  return lineNamesHook(words.join(" "), part.cwd, home) || words.some(isEnvProgram) || starts.some(git) || optionsRefused(part.program, words, git);
+}
+function submitSetsProgram(words) {
+  const sub = words[0];
+  if (sub === void 0 || !(sub.includes(UNKNOWN) || hasGlobClass(sub) || globMatches(sub, "submit"))) return false;
+  const last = words.lastIndexOf("--");
+  return words.slice(1, last === -1 ? words.length : last).some((w) => /^-[A-Za-z]*p/.test(w));
+}
+var ARCH_VALUE_OPTIONS = /* @__PURE__ */ new Set(["-arch", "-e", "-d"]);
+function optionsRefused(program, words, git) {
+  const arch = isArchProgram(program);
+  if (isLaunchctlProgram(program) && submitSetsProgram(words)) return true;
+  const values = [];
+  let i = !arch && words[0] !== void 0 && !words[0].startsWith("-") ? 1 : 0;
+  for (; i < words.length; i++) {
+    const w = words[i];
+    if (w === "--" || !w.startsWith("-") || w === "-") break;
+    const attached = w.length > 2 && !w.startsWith("--") && (!arch || /^-[ed]/.test(w)) ? w.slice(2) : null;
+    const takes = arch ? ARCH_VALUE_OPTIONS.has(w) : words[i + 1] !== void 0 && !words[i + 1].startsWith("-");
+    const value = attached ?? (takes ? words[i + 1] : void 0);
+    if (value !== void 0) {
+      if (arch && /^-[ed]/.test(w) && value.includes(UNKNOWN)) return true;
+      values.push(value);
+    }
+    if (attached === null && takes) i++;
+  }
+  return values.some(git);
+}
+var ARCH_LAUNCHCTL_REFUSAL = {
+  rule: "protected-path",
+  reason: "Refused: `arch` or `launchctl` runs another program here (an OSS hook script, env, git or a protected path) that the gate does not check through it. Run that program directly."
+};
+function checkArchLaunchctlMention(part, ...rest) {
+  if (part.program === null || !(isArchProgram(part.program) || isLaunchctlProgram(part.program))) return null;
+  const pieces = part.words.slice(1).flatMap((w) => [w, ...w.split(/[\s'"`;|&()<>]+/)]).filter((w) => w !== "");
+  if (!pieces.some((w) => protectedPathNamed(w, part.cwd, ...rest) !== null)) return null;
+  return ARCH_LAUNCHCTL_REFUSAL;
+}
 function checkOssHookEnv(part, command, home, sources) {
-  if (!partNamesHook(part) && !PLUGIN_HOOK.test(command)) return null;
-  const clears = part.wrappers.some((w, i) => w === "env" || w === "exec" && part.wrapperOptions[i].some((o) => /^-[A-Za-z]*c/.test(o)));
+  if (programHidden(part)) {
+    if (commandScan(command, part.cwd, home, sources) !== "ok") {
+      return {
+        rule: "protected-path",
+        reason: "Refused: the program this command runs is read from a file or through indirection, which the gate can't see, or is a value the shell splits into words that run an OSS hook script (`~/.oss/hooks/\u2026`) with a variable set or cleared. Write the program name out."
+      };
+    }
+  }
+  if (archOrLaunchctlRuns(part, home)) return ARCH_LAUNCHCTL_REFUSAL;
+  if (part.runBy !== void 0 && programHidden(part) && lineNamesHook(command, part.cwd, home)) return ARCH_LAUNCHCTL_REFUSAL;
+  if (!partNamesHook(part, home) && !PLUGIN_HOOK.test(command)) return null;
+  const clears = part.program !== null && isEnvProgram(part.program) || part.wrappers.some((w, i) => w === "env" || w === "exec" && part.wrapperOptions[i].some((o) => /^-[A-Za-z]*c/.test(o)));
   if (!clears && !setsRefusedVariable(command, 0, { home, sources: sourcesFor(command, sources) })) return null;
   return {
     rule: "protected-path",
@@ -8356,8 +9467,8 @@ function checkOssHookEnv(part, command, home, sources) {
 }
 
 // src/tool-gate/rules/protected-branch.ts
-var import_node_fs14 = __toESM(require("node:fs"), 1);
-var import_node_path22 = __toESM(require("node:path"), 1);
+var import_node_fs15 = __toESM(require("node:fs"), 1);
+var import_node_path25 = __toESM(require("node:path"), 1);
 var BRANCH_REF_PREFIXES = ["refs/heads/", "heads/"];
 function rawDestination(refspec) {
   const spec = refspec.startsWith("+") ? refspec.slice(1) : refspec;
@@ -8494,7 +9605,6 @@ function symbolicTarget(args, branches) {
   const deletes = args.some((a) => a === "-d" || a === "--delete");
   return deletes && name !== void 0 && namesProtected(name, branches) ? name : null;
 }
-var UPDATE_REF_VALUES = /* @__PURE__ */ new Set(["-m"]);
 var BRANCH_MODE_LETTERS = /^-[A-Za-z]*[dDmMcCf]/;
 var BRANCH_MODE_LONG = /* @__PURE__ */ new Set(["--delete", "--move", "--copy", "--force"]);
 var BRANCH_VALUES2 = /* @__PURE__ */ new Set(["--contains", "--no-contains", "--merged", "--no-merged", "--points-at", "--sort", "--format", "-u", "--set-upstream-to"]);
@@ -8510,19 +9620,18 @@ async function checkBranchRefs(part, settings, git, caseInsensitive = false) {
   const branches = branchesOf(settings, caseInsensitive);
   const { subcommand, args } = facts;
   if (subcommand === "update-ref") {
-    if (args.includes("--stdin")) {
-      return { rule: "protected-branch", reason: "Refused: `git update-ref --stdin` reads the refs it changes from stdin, which the gate can't check. Change one ref per call instead." };
-    }
-    const [ref] = positionalsOf(args, UPDATE_REF_VALUES);
-    if (ref === void 0) return null;
-    if (ref === "HEAD") {
-      if (args.includes("--no-deref")) return null;
-      const current2 = await git.currentBranch(facts.dir);
-      return current2 !== null && isProtected2(current2, branches) ? refChange("git update-ref HEAD", current2) : null;
-    }
-    return namesProtected(ref, branches) ? refChange(`git update-ref ${ref}`, ref) : null;
+    return { rule: "protected-branch", reason: "Refused: `git update-ref` writes a ref directly, without the history git keeps for it. Ask the user to run it with `!`." };
+  }
+  if (subcommand === "replace" && !replaceLists(args)) {
+    return { rule: "protected-branch", reason: "Refused: `git replace` changes which commits git shows, without a ref change. Ask the user to run it with `!`." };
+  }
+  if (subcommand === "reflog" && REFLOG_CHANGES.has(args[0])) {
+    return { rule: "protected-branch", reason: `Refused: \`git reflog ${args[0]}\` changes or erases the ref history a lost commit is found by. Ask the user to run it with \`!\`.` };
   }
   if (subcommand === "symbolic-ref") {
+    const [name, pointed] = positionalsOf(args, SYMBOLIC_REF_VALUES);
+    const writes = pointed !== void 0 || args.some((a) => a === "-d" || a === "--delete");
+    if (writes && name !== void 0 && remoteTracking(name, false)) return REMOTE_TRACKING_REFUSAL;
     const target = symbolicTarget(args, branches);
     return target === null ? null : refChange(`git symbolic-ref \u2026 ${target}`, target);
   }
@@ -8538,6 +9647,12 @@ async function checkBranchRefs(part, settings, git, caseInsensitive = false) {
     const created = worktreeBranch(args, branches);
     return created === void 0 ? null : refChange(`git worktree ${args.join(" ")}`, created);
   }
+  if (subcommand === "remote") {
+    const at = args.findIndex((a) => !a.startsWith("-"));
+    if (args[at] === "set-head" && !args.slice(at + 1).some((a) => SET_HEAD_GIT_DECIDES.has(a))) return REMOTE_TRACKING_REFUSAL;
+  }
+  const forged = remoteRefForge(facts);
+  if (forged !== null) return forged;
   if (subcommand === "fetch") {
     const target = positionalsOf(args, FETCH_VALUES).slice(1).filter((spec) => spec.includes(":")).map((spec) => protectedTarget(spec, branches)).find((dst) => dst !== void 0);
     return target === void 0 ? null : refChange(`git fetch ${args.join(" ")}`, target);
@@ -8547,6 +9662,12 @@ async function checkBranchRefs(part, settings, git, caseInsensitive = false) {
   if (mode === void 0) return null;
   const named2 = positionalsOf(args, BRANCH_VALUES2).find((w) => namesProtected(w, branches));
   return named2 === void 0 ? null : refChange(`git branch ${mode} \u2026 ${named2}`, named2);
+}
+function replaceLists(args) {
+  const listing = args.includes("-l") || args.includes("--list");
+  const options = args.filter((a) => a.startsWith("-"));
+  const patterns = args.length - options.length;
+  return options.every((a) => a === "-l" || a === "--list" || a.startsWith("--format=")) && (patterns === 0 || listing && patterns === 1);
 }
 function readOptions(args, spec) {
   const values = [];
@@ -8625,6 +9746,179 @@ var FETCH_VALUES = /* @__PURE__ */ new Set([
   "--refmap",
   "--filter"
 ]);
+var FETCH_REFMAP = { valueLetters: /* @__PURE__ */ new Set(), valueLongs: [{ full: "--refmap", shortest: 6 }] };
+var REMOTE_TRACKING = /^(?:refs\/)?remotes\//;
+var SAMPLE_REPLACE_REF = "refs/replace/0123456789012345678901234567890123456789";
+function replaceRef(ref) {
+  const lower = ref.split(UNKNOWN)[0].toLowerCase();
+  return lower.startsWith("refs/replace/") || lower.includes(REFSPEC_WILDCARD) && matchCommand(lower, [SAMPLE_REPLACE_REF]);
+}
+var SAMPLE_REMOTE_TRACKING_REF = "refs/remotes/r/b";
+function remoteTracking(ref, wildcards) {
+  const lower = ref.split(UNKNOWN)[0].toLowerCase();
+  return REMOTE_TRACKING.test(lower) || wildcards && lower.includes(REFSPEC_WILDCARD) && matchCommand(lower, [SAMPLE_REMOTE_TRACKING_REF]);
+}
+var FILE_URL = /^file:\/\//i;
+var URL_SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//;
+function isLocalUrl(url) {
+  if (FILE_URL.test(url)) return true;
+  if (oddHost(url)) return true;
+  if (loopbackHost(urlHost(url))) return true;
+  if (URL_SCHEME.test(url)) return false;
+  const colon = url.indexOf(":");
+  const unknown = url.indexOf(UNKNOWN);
+  if (unknown !== -1 && (colon === -1 || unknown < colon)) return true;
+  return colon === -1 || url.slice(0, colon).includes("/");
+}
+function oddHost(url) {
+  const scheme = /^(?:ssh|git\+ssh|ssh\+git|git):\/\//i.exec(url);
+  let host;
+  if (scheme !== null) {
+    const rest = url.slice(scheme[0].length);
+    host = rest.slice(0, rest.search(/\/|$/));
+  } else {
+    const colon = url.indexOf(":");
+    if (URL_SCHEME.test(url) || colon === -1 || url.slice(0, colon).includes("/")) return false;
+    host = url.slice(0, colon);
+  }
+  return /[[%]/.test(host) || host.split("@").length > 2;
+}
+function percentDecoded(text) {
+  try {
+    return decodeURIComponent(text);
+  } catch {
+    return text.replace(/%[0-9A-Fa-f]{2}/g, (e) => String.fromCharCode(parseInt(e.slice(1), 16)));
+  }
+}
+function urlHost(url) {
+  const scheme = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//.exec(url);
+  const ssh = scheme !== null && /^(?:ssh|git\+ssh|ssh\+git):\/\/$/i.test(scheme[0]);
+  const decodedFirst = ssh || scheme !== null && /^git:\/\/$/i.test(scheme[0]);
+  const rest = scheme === null ? url : decodedFirst ? percentDecoded(url.slice(scheme[0].length)) : url.slice(scheme[0].length);
+  const end = ssh ? /\/|$/ : /[/?#]|$/;
+  const written = scheme === null ? /^(?:[^@/:[\]]*@)?\[[^\]]*\]|^[^:/]*/.exec(rest)?.[0] ?? "" : rest.slice(0, rest.search(end));
+  const authority = decodedFirst ? written : percentDecoded(written);
+  const bracketFirst = scheme === null || ssh;
+  if (bracketFirst && authority.startsWith("[") && authority.includes("]")) return authority.slice(1, authority.indexOf("]")).replace(/^.*@/, "");
+  const host = authority.replace(/^.*@/, "");
+  return host.startsWith("[") ? host.slice(1, host.includes("]") ? host.indexOf("]") : void 0) : host.replace(/:.*$/, "");
+}
+function loopbackHost(raw) {
+  let host = raw;
+  try {
+    host = decodeURIComponent(raw);
+  } catch {
+  }
+  host = host.toLowerCase().replace(/\.+$/, "");
+  if (host === "localhost" || host.endsWith(".localhost")) return true;
+  if (host.includes(":")) return loopbackIpv6(host);
+  const v4 = ipv4Number(host);
+  return v4 !== null && localIpv4(v4);
+}
+function localIpv4(value) {
+  return value >>> 24 === 127 || value === 0;
+}
+function ipv4Number(host) {
+  const parts = host.split(".");
+  if (parts.length > 4) return null;
+  const values = [];
+  for (const part of parts) {
+    const value = /^0x[0-9a-f]*$/.test(part) ? parseInt(part.slice(2) || "0", 16) : /^0[0-7]*$/.test(part) ? parseInt(part, 8) : /^[1-9][0-9]*$/.test(part) ? Number(part) : NaN;
+    if (!Number.isFinite(value)) return null;
+    values.push(value);
+  }
+  const last = values.pop();
+  if (values.some((v) => v > 255) || last >= 2 ** (8 * (4 - values.length))) return null;
+  return values.reduce((sum, v, i) => sum + v * 2 ** (8 * (3 - i)), 0) + last;
+}
+function loopbackIpv6(host) {
+  let text = host.replace(/%.*$/, "");
+  const tail = /(?:^|:)([0-9.]+\.[0-9.]+)$/.exec(text);
+  if (tail !== null) {
+    const v42 = ipv4Number(tail[1]);
+    if (v42 === null) return false;
+    text = `${text.slice(0, text.length - tail[1].length)}${(v42 >>> 16).toString(16)}:${(v42 & 65535).toString(16)}`;
+  }
+  const halves = text.split("::");
+  if (halves.length > 2) return false;
+  const head = halves[0] === "" ? [] : halves[0].split(":");
+  const rest = halves.length === 2 && halves[1] !== "" ? halves[1].split(":") : [];
+  if (halves.length === 1 && head.length !== 8) return false;
+  const groups = [...head, ...Array(8 - head.length - rest.length).fill("0"), ...rest];
+  if (groups.length !== 8 || groups.some((g) => !/^[0-9a-f]{1,4}$/.test(g))) return false;
+  const n = groups.map((g) => parseInt(g, 16));
+  const v4 = n[6] * 65536 + n[7];
+  if (n.slice(0, 7).every((g) => g === 0) && n[7] <= 1) return true;
+  return n.slice(0, 5).every((g) => g === 0) && (n[5] === 65535 || n[5] === 0) && localIpv4(v4);
+}
+function realOrNull2(p) {
+  try {
+    return import_node_fs15.default.realpathSync(p);
+  } catch {
+    return null;
+  }
+}
+function selfRemote(word, dir) {
+  if (word.includes(UNKNOWN) || !isLocalUrl(word)) return false;
+  const here = findRepo(dir);
+  if (here.kind !== "repo") return false;
+  const common = realOrNull2(here.commonDir);
+  const own = new Set([here.top, here.gitDir, here.commonDir].map(realOrNull2));
+  const spelled = word.replace(FILE_URL, "");
+  for (const base of [dir, here.top]) {
+    const target = import_node_path25.default.resolve(base, spelled);
+    for (const candidate of [target, import_node_path25.default.join(target, ".git"), `${target}.git`]) {
+      const real = realOrNull2(candidate);
+      if (real === null) continue;
+      if (own.has(real)) return true;
+      const there = findRepo(candidate);
+      if (there.kind === "repo" && there.top === real && realOrNull2(there.commonDir) === common) return true;
+    }
+  }
+  return false;
+}
+var SET_HEAD_GIT_DECIDES = /* @__PURE__ */ new Set(["-a", "--auto", "-d", "--delete"]);
+var SELF_REMOTE_REFUSAL = {
+  rule: "protected-branch",
+  reason: "Refused: this `git fetch` / `git push` names the repository itself (or one of its worktrees) as the remote, which can write any of its refs, remote-tracking ones included. Ask the user to run it with `!`."
+};
+var REPLACE_REFUSAL = {
+  rule: "protected-branch",
+  reason: "Refused: this git call writes a replace ref (under refs/replace/), which changes which commits git shows. Ask the user to run it with `!`."
+};
+var REMOTE_TRACKING_REFUSAL = {
+  rule: "protected-branch",
+  reason: "Refused: this git call writes a remote-tracking ref (under refs/remotes/), which the ship base is read from. Let a plain `git fetch` update those refs."
+};
+function remoteRefForge(facts) {
+  const { subcommand, args, dir } = facts;
+  if (subcommand !== "fetch" && subcommand !== "push" && subcommand !== "pull") return null;
+  const words = subcommand === "push" ? readPushWords(args).positional : positionalsOf(args, subcommand === "fetch" ? FETCH_VALUES : PULL_VALUES);
+  const [repo, ...specs] = words;
+  if (subcommand !== "pull" && repo !== void 0 && selfRemote(repo, dir)) return SELF_REMOTE_REFUSAL;
+  const maps = subcommand === "fetch" ? readOptions(args, FETCH_REFMAP).values.map(([, map]) => map) : [];
+  if (subcommand !== "push" && [...specs, ...maps].some((spec) => spec.includes(":") && replaceRef(rawDestination(spec)))) return REPLACE_REFUSAL;
+  const explicit = specs.filter((spec) => subcommand === "push" || spec.includes(":") && !defaultMapping(repo, spec, dir));
+  const destinations = [...explicit, ...maps.filter((map) => map.includes(":"))];
+  return destinations.some((spec) => remoteTracking(rawDestination(spec), subcommand !== "push")) ? REMOTE_TRACKING_REFUSAL : null;
+}
+function defaultMapping(remote, spec, dir) {
+  if (remote === void 0 || !REMOTE_NAME.test(remote) || existsOnDisk(import_node_path25.default.resolve(dir, remote)) || !configuredRemote(remote, dir)) return false;
+  const plain = spec.startsWith("+") ? spec.slice(1) : spec;
+  if (plain.includes(REFSPEC_WILDCARD) || plain.includes(UNKNOWN)) return false;
+  const colon = plain.indexOf(":");
+  const branch = plain.slice(0, colon).replace(/^(?:refs\/heads\/|heads\/)/, "");
+  return branch !== "" && plain.slice(colon + 1) === `refs/remotes/${remote}/${branch}`;
+}
+var MAX_CONFIG_BYTES = 1024 * 1024;
+var REMOTE_SECTION = /^\s*\[\s*remote\s+"([^"\\]*)"\s*\]/i;
+function configuredRemote(name, dir) {
+  const here = findRepo(dir);
+  if (here.kind !== "repo") return false;
+  const read = readRegularFile(import_node_path25.default.join(here.commonDir, "config"), MAX_CONFIG_BYTES, true);
+  if (typeof read === "string" || /^\s*\[\s*include/im.test(read.text)) return false;
+  return read.text.split("\n").some((line) => REMOTE_SECTION.exec(line)?.[1] === name);
+}
 function trustForCall(trustOf) {
   const known = /* @__PURE__ */ new Map();
   return (dir) => {
@@ -8645,7 +9939,7 @@ function checkRepoTrust(part, trustOf) {
   };
 }
 function existsOnDisk(absPath) {
-  return import_node_fs14.default.lstatSync(absPath, { throwIfNoEntry: false }) !== void 0;
+  return import_node_fs15.default.lstatSync(absPath, { throwIfNoEntry: false }) !== void 0;
 }
 var HISTORY_MOVERS = /* @__PURE__ */ new Set(["merge", "rebase", "cherry-pick", "revert", "am"]);
 var STOPS_WITHOUT_MOVING = /* @__PURE__ */ new Set(["--abort", "--quit", "--edit-todo", "--show-current-patch"]);
@@ -8663,7 +9957,7 @@ function resetMoves(args, dir, exists) {
   const [target] = before;
   if (HEAD_NAMES.has(target)) return false;
   if (dash !== -1) return true;
-  return !PATHSPEC_ONLY.test(target) && !exists(import_node_path22.default.resolve(dir, target));
+  return !PATHSPEC_ONLY.test(target) && !exists(import_node_path25.default.resolve(dir, target));
 }
 var BRANCH_RENAME = /^(?:-(?=[A-Za-z]*[mM])[A-Za-z]+|--move)$/;
 function historyMove(git, exists) {
@@ -8684,6 +9978,7 @@ function historyMove(git, exists) {
 }
 var REWRITERS = /* @__PURE__ */ new Set(["filter-branch", "filter-repo", "fast-import", "replace"]);
 var REFLOG_DROPS = /* @__PURE__ */ new Set(["delete", "expire"]);
+var REFLOG_CHANGES = /* @__PURE__ */ new Set([...REFLOG_DROPS, "drop", "write"]);
 var SUBTREE_MOVES = /* @__PURE__ */ new Set(["merge", "pull"]);
 var EVERY_BRANCH = /* @__PURE__ */ new Set(["--all", "--branches"]);
 var REFLOG_ENTRY = /@\{[^}]*\}$/;
@@ -8714,7 +10009,7 @@ var REMOTE_NAME = /^[A-Za-z0-9_][A-Za-z0-9._-]*$/;
 function ownUpstream(git, branch, branches, exists) {
   const [repo, ...specs] = positionalsOf(git.args, PULL_VALUES);
   if (repo === void 0) return true;
-  if (!REMOTE_NAME.test(repo) || exists(import_node_path22.default.resolve(git.dir, repo))) return false;
+  if (!REMOTE_NAME.test(repo) || exists(import_node_path25.default.resolve(git.dir, repo))) return false;
   const name = (ref) => folded(ref.replace(/^(?:refs\/heads\/|heads\/)/, ""), branches);
   return specs.every((spec) => !spec.includes(":") && !spec.startsWith("+") && name(spec) === name(branch));
 }
@@ -8743,383 +10038,6 @@ async function checkHistoryMove(part, settings, git, created = null, exists = ex
   return {
     rule: "protected-branch",
     reason: `Refused: \`${command}\` while on \`${current2}\`, a protected branch, moves its history. Use a feature branch.`
-  };
-}
-
-// src/tool-gate/rules/protected-path-mention.ts
-var import_node_path23 = __toESM(require("node:path"), 1);
-var SCRIPT_LAUNCHERS = /* @__PURE__ */ new Set(["trap", "emulate", "sched"]);
-function launchedScript(name, words) {
-  const args = words.slice(1);
-  if (name === "trap") return args[args[0] === "--" ? 1 : 0] ?? "";
-  if (name === "emulate") return args[args.indexOf("-c") + 1] ?? "";
-  return args.slice(args.findIndex((a) => !a.startsWith("-")) + 1).join(" ");
-}
-function shortened(text) {
-  return text.length > 60 ? `${text.slice(0, 59)}\u2026` : text;
-}
-var READ_ONLY = /* @__PURE__ */ new Set([
-  "cat",
-  "less",
-  "head",
-  "tail",
-  "grep",
-  "rg",
-  "ls",
-  "stat",
-  "file",
-  "wc",
-  "diff",
-  "cmp",
-  "md5",
-  "shasum",
-  "test",
-  "[",
-  "[[",
-  "find",
-  "cd",
-  "pushd",
-  "popd",
-  "jq",
-  "echo",
-  "printf"
-]);
-var SAFE_IN_PROTECTED_FOLDER = /* @__PURE__ */ new Set(["mkdir"]);
-var FOLDER_MAKERS = /* @__PURE__ */ new Set(["mkdir"]);
-var GIT_READ_ONLY = /* @__PURE__ */ new Set(["diff", "log", "show", "status", "blame", "ls-files"]);
-var GIT_INDEX_ONLY = /* @__PURE__ */ new Set(["add"]);
-var WRITING_OPTIONS = /* @__PURE__ */ new Map([
-  ["find", ["-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprint0", "-fprintf", "-fls"]],
-  ["rg", ["--pre"]],
-  ["file", ["-C", "--compile"]],
-  ["git", ["--output"]]
-]);
-var SED_NAMES2 = /* @__PURE__ */ new Set(["sed", "gsed"]);
-var SED_VALUE_LETTERS2 = /* @__PURE__ */ new Set(["e", "f", "l"]);
-var SED_VALUE_LONG = /* @__PURE__ */ new Set(["--expression", "--file", "--line-length"]);
-var AWK_NAMES2 = /* @__PURE__ */ new Set(["awk", "gawk", "mawk", "nawk"]);
-function sedEditsInPlace(args) {
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i];
-    if (a === "--") return false;
-    if (a.startsWith("--")) {
-      if (longOption(a, "--in-place", 3)) return true;
-      if (SED_VALUE_LONG.has(a)) i++;
-    } else if (a.startsWith("-") && a.length > 1) {
-      for (let j = 1; j < a.length; j++) {
-        if (a[j] === "i" || a[j] === "I") return true;
-        if (SED_VALUE_LETTERS2.has(a[j])) {
-          if (j === a.length - 1) i++;
-          break;
-        }
-      }
-    }
-  }
-  return false;
-}
-var CWD_WRITERS = /* @__PURE__ */ new Set(["tar", "bsdtar", "gtar", "unzip", "cpio", "pax", "7z", "7za", "ar", "wget"]);
-var CURL_SAVES_HERE = /^(?:--remote-name(?:-all)?|--remote-header-name|--output-dir(?:=.*)?|-(?=[A-Za-z]*[OJ])[A-Za-z]+)$/;
-function writesIntoCwd(part, name) {
-  if (CWD_WRITERS.has(name)) return true;
-  return name === "curl" && part.words.slice(1).some((w) => CURL_SAVES_HERE.test(w));
-}
-var INTERPRETERS2 = /* @__PURE__ */ new Set(["python", "python3", "node", "perl", "ruby", "sh", "bash", "zsh", "osascript", "deno", "bun"]);
-var PYTHON3 = /^python[0-9.]*$/;
-function isInterpreter2(name) {
-  return INTERPRETERS2.has(name) || PYTHON3.test(name);
-}
-var SCRIPT_RUNNERS2 = /* @__PURE__ */ new Set(["source", "."]);
-var SCRIPT_FLAG2 = /^(?:-[A-Za-z]*[ceE]|--eval|-p|--print)$/;
-var QUOTES = /* @__PURE__ */ new Set(["'", '"', "`"]);
-function foundPath(part, ctx, dir) {
-  if (plainWriterName(part.name ?? "") !== "find") return null;
-  const writing = WRITING_OPTIONS.get("find") ?? [];
-  if (!part.words.slice(1).some((w) => writing.includes(w))) return null;
-  const starts = findStarts(part.words.slice(1)).map((start) => joinRaw(dir, expandTilde3(start, ctx.home)));
-  return starts.find((p) => isProtected(p, ctx.settings, ctx.places, ctx.paths) || holdsProtected(p, ctx.settings, ctx.places, ctx.paths)) ?? null;
-}
-var GIT_COMMAND_SETTINGS = ["-c", "--config-env"];
-var GIT_VARIABLE2 = /^GIT_/;
-function carriesGitSettings(part) {
-  const git = part.git;
-  if (git === null) return false;
-  const globals = part.words.slice(1, part.words.length - git.args.length - 1);
-  return globals.some((w) => GIT_COMMAND_SETTINGS.some((o) => w === o || w.startsWith(`${o}=`))) || part.assignments.some((n) => GIT_VARIABLE2.test(n));
-}
-function isReadOnly(part, name) {
-  const writing = WRITING_OPTIONS.get(name) ?? [];
-  const args = part.words.slice(1);
-  if (args.some((w) => writing.some((o) => w === o || w.startsWith(`${o}=`)))) return false;
-  if (name === "git") return part.git !== null && GIT_READ_ONLY.has(part.git.subcommand) && !carriesGitSettings(part);
-  if (SED_NAMES2.has(name)) return !sedEditsInPlace(args) && !runsScriptFile(name, args);
-  if (AWK_NAMES2.has(name)) return !awkFacts(args).loads && !runsScriptFile(name, args);
-  return READ_ONLY.has(name);
-}
-function safeInProtectedFolder(part, name) {
-  return SAFE_IN_PROTECTED_FOLDER.has(name) || name === "git" && part.git !== null && GIT_INDEX_ONLY.has(part.git.subcommand) && !carriesGitSettings(part);
-}
-function expandTilde3(p, home) {
-  if (p === "~") return home;
-  return p.startsWith("~/") ? home + p.slice(1) : p;
-}
-function isRootOrAbove(given, places) {
-  const absPath = unfirm(given);
-  return places.some((at) => {
-    const ci = at.caseInsensitive === true;
-    return isSameOrAncestor(absPath, at.root, ci) || isSameOrAncestor(absPath, at.home, ci);
-  });
-}
-function namedPattern(part, word, dir, ctx) {
-  const glob = part.globs.get(word);
-  if (glob === void 0) return null;
-  for (const value of valuesOf(glob)) {
-    const pattern = globPathOf(value, escapeGlob(dir), ctx.home);
-    if (patternReachesProtected(pattern, ctx.settings, ctx.places, ctx.paths, true, part.dotGlob)) return pattern;
-  }
-  return null;
-}
-function namedPath(word, dir, ctx, folders = true) {
-  const unknownAt = word.indexOf(UNKNOWN);
-  if (unknownAt !== -1) {
-    const known = word.slice(0, unknownAt);
-    if (known === "") return null;
-    const absPath2 = joinRaw(dir, expandTilde3(known + UNKNOWN, ctx.home));
-    return isProtected(absPath2, ctx.settings, ctx.places, ctx.paths) ? absPath2 : null;
-  }
-  const absPath = joinRaw(dir, expandTilde3(word, ctx.home));
-  if (isProtected(absPath, ctx.settings, ctx.places, ctx.paths)) return absPath;
-  if (!folders) return null;
-  const holds = holdsProtected(absPath, ctx.settings, ctx.places, ctx.paths);
-  return holds && !isRootOrAbove(import_node_path23.default.normalize(absPath), ctx.places) ? absPath : null;
-}
-function protectedPathNamed(word, dir, settings, places, paths, home) {
-  const ctx = { settings, places, paths, home };
-  for (const value of valuesOf(word)) {
-    if (isTooLong(value)) continue;
-    const named2 = namedPath(value, dir, ctx);
-    if (named2 !== null) return named2;
-  }
-  return null;
-}
-function valuesOf(word) {
-  const eq = word.indexOf("=");
-  return eq === -1 ? [word] : [word, word.slice(eq + 1)];
-}
-function wordsOf(part, name) {
-  const args = part.words.slice(1);
-  if (name === "cp") {
-    const { sources, dest } = cpOperands(args);
-    const files = /* @__PURE__ */ new Set([...sources, ...dest === null ? [] : [dest]]);
-    return { words: args.filter((a) => !files.has(a)), scripts: [] };
-  }
-  const interpreter = isInterpreter2(name);
-  if (!interpreter && !SCRIPT_RUNNERS2.has(import_node_path23.default.posix.basename(part.program ?? ""))) return { words: args, scripts: [] };
-  const words = [];
-  const scripts = [];
-  let scriptSeen = false;
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i];
-    if (interpreter && SCRIPT_FLAG2.test(a) && i + 1 < args.length) {
-      scripts.push(args[++i]);
-      scriptSeen = true;
-    } else if (!scriptSeen && !a.startsWith("-")) {
-      scriptSeen = true;
-    } else {
-      words.push(a);
-    }
-  }
-  return { words, scripts };
-}
-function stringLiterals(script) {
-  const literals = [];
-  const unclosed = /* @__PURE__ */ new Set();
-  let i = 0;
-  while (i < script.length) {
-    tick();
-    const quote = script[i];
-    if (!QUOTES.has(quote) || unclosed.has(quote)) {
-      i++;
-      continue;
-    }
-    let j = i + 1;
-    while (j < script.length && script[j] !== quote) {
-      tick();
-      j += quote === '"' && script[j] === "\\" ? 2 : 1;
-    }
-    if (j >= script.length) {
-      unclosed.add(quote);
-      i++;
-      continue;
-    }
-    literals.push(script.slice(i + 1, j));
-    i = j + 1;
-  }
-  return literals;
-}
-var LITERALS = /* @__PURE__ */ new WeakMap();
-function partLiterals(part) {
-  const known = LITERALS.get(part);
-  if (known !== void 0) return known;
-  const literals = part.name === null || !isInterpreter2(part.name) ? [] : scriptsOf(part, part.name).flatMap(stringLiterals);
-  LITERALS.set(part, literals);
-  return literals;
-}
-function scriptsOf(part, name) {
-  return [...wordsOf(part, name).scripts, ...part.stdinScripts];
-}
-function literalsOf(part) {
-  return [...new Set(partLiterals(part).filter((literal2) => literal2 !== ""))];
-}
-function matchesOutsideRoot(glob) {
-  return glob.startsWith("~/") || glob.startsWith("**/") || import_node_path23.default.isAbsolute(glob);
-}
-function namedInScript(literals, dir, ctx) {
-  const tails = ctx.settings.protectedPaths.filter(matchesOutsideRoot).map((glob) => `**/${glob.startsWith("~/") ? glob.slice(2) : glob}`);
-  for (const literal2 of literals) {
-    const named2 = namedPath(literal2, dir, ctx);
-    if (named2 !== null) return named2;
-    const tail = import_node_path23.default.posix.normalize(`/${literal2}`);
-    if (ctx.places.some((at) => matchAnyPath(tails, tail, at))) return literal2;
-  }
-  return null;
-}
-var MAX_CALL_WORDS2 = 2048;
-function stdinScriptChars(part) {
-  return part.name === null || !isInterpreter2(part.name) ? 0 : part.stdinScripts.reduce((n, script) => n + script.length, 0);
-}
-function checkCallSize(parts) {
-  const chars = parts.reduce((n, part) => n + stdinScriptChars(part), 0);
-  if (chars > MAX_CALL_CHARS) {
-    return {
-      rule: "protected-path-mention",
-      reason: `Refused: this command is too complex for the gate to check (scripts fed on stdin longer than ${MAX_CALL_CHARS / 1024} KB in all); split it into simpler commands.`
-    };
-  }
-  const words = parts.reduce((n, part) => n + Math.max(1, part.words.length + part.writeTargets.length + partLiterals(part).length), 0);
-  if (words <= MAX_CALL_WORDS2) return null;
-  return {
-    rule: "protected-path-mention",
-    reason: `Refused: this command has too many words for the gate to check (over ${MAX_CALL_WORDS2}). Split it into shorter commands.`
-  };
-}
-var OUTPUT_NAMES = /* @__PURE__ */ new Set([
-  "out",
-  "output",
-  "outfile",
-  "outputfile",
-  "outdir",
-  "outputdir",
-  "report",
-  "reportpath",
-  "junit",
-  "junitxml",
-  "coverprofile",
-  "dest",
-  "write",
-  "logfile",
-  "outputpath",
-  "reportdir",
-  "coveragedir",
-  "declarationdir"
-]);
-var OUTPUT_OPTION = /^--?([A-Za-z][A-Za-z_-]*)(?:=([\s\S]*))?$/;
-var PROGRAM_WRITE_OPTIONS = /* @__PURE__ */ new Map([["prettier", ["-w"]]]);
-var OUTPUT_SHORT = /^-[A-Za-z]*o$/;
-var OUTPUT_ATTACHED = /^-o(.+)$/;
-function outputName(word) {
-  const match = OUTPUT_OPTION.exec(word);
-  if (match === null) return null;
-  const name = match[1].toLowerCase().replace(/[-_]/g, "");
-  return OUTPUT_NAMES.has(name) ? { name, value: match[2] } : null;
-}
-function outputValues2(words, settings) {
-  const values = [];
-  for (let i = 0; i < words.length; i++) {
-    const w = words[i];
-    const named2 = outputName(w);
-    if (named2 !== null) {
-      const value = named2.value ?? (i + 1 < words.length ? words[++i] : void 0);
-      if (value !== void 0) values.push({ value, folder: named2.name.endsWith("dir") });
-    } else if (OUTPUT_SHORT.test(w) && i + 1 < words.length) values.push({ value: words[++i], folder: false });
-    else if (OUTPUT_ATTACHED.test(w)) values.push({ value: w.slice(2), folder: false });
-  }
-  const writeOptions = (settings.reviewWriteOptions ?? []).filter((o) => o.startsWith("-") && !o.includes(" "));
-  const programOptions = words.flatMap((w) => PROGRAM_WRITE_OPTIONS.get(import_node_path23.default.basename(w)) ?? []);
-  if (words.some((w) => writeOptions.includes(w) || programOptions.includes(w))) {
-    values.push(...words.slice(1).filter((w) => !w.startsWith("-")).map((value) => ({ value, folder: false })));
-  }
-  return values;
-}
-function lostTailNamed(part, written, ctx) {
-  if (part.lostDir === null || part.name === null || safeInProtectedFolder(part, part.name)) return null;
-  const relative = written.filter(
-    ({ value: w, folder }) => (folder || /[./]/.test(w)) && !w.startsWith("-") && !w.startsWith("~") && !import_node_path23.default.isAbsolute(w) && !w.includes(UNKNOWN)
-  );
-  const globOf2 = ({ value, folder }) => {
-    const glob = part.globs.get(value) ?? escapeGlob(value);
-    return folder ? `${glob.replace(/\/+$/, "")}/*` : glob;
-  };
-  const contents = (w) => part.lostDir?.pattern === null && part.git === null && !w.includes("://");
-  return relative.find((w) => ctx.places.some((at) => tailMayBeProtected(globOf2(w), ctx.settings.protectedPaths, at, part.dotGlob, contents(w.value))))?.value ?? null;
-}
-function checkProtectedPathMention(part, settings, root, home, paths, caseInsensitive = false, places) {
-  if (part.program === null || part.name === null) return null;
-  const { name } = part;
-  const readOnly = isReadOnly(part, name);
-  if (readOnly && !SED_NAMES2.has(name) && !AWK_NAMES2.has(name) || part.git?.subcommand === "clean") return null;
-  const ctx = { settings, places: places ?? placesOf(root, home, paths, caseInsensitive), paths, home };
-  const dir = part.git?.dir ?? part.cwd;
-  const here = safeInProtectedFolder(part, name) ? null : namedPath(dir, "/", ctx);
-  if (here !== null) {
-    return {
-      rule: "protected-path-mention",
-      reason: `Refused: \`${name}\` runs in \`${displayPath(here, root, home)}\`, which holds protected paths, and only read-only programs may run there. Ask the user to run it with \`!\`.`
-    };
-  }
-  const lost = part.lostDir?.pattern ?? null;
-  if (lost !== null && patternReachesProtected(lost, settings, ctx.places, paths, true, part.dotGlob)) {
-    return {
-      rule: "protected-path-mention",
-      reason: `Refused: \`${name}\` runs after \`${part.lostDir?.why}\`, which could be a protected folder, and only read-only programs may run there. Ask the user to run it with \`!\`.`
-    };
-  }
-  if (readOnly) return null;
-  const given = wordsOf(part, name);
-  const words = [...given.words, ...part.assignmentValues];
-  const literals = literalsOf(part);
-  if (words.flatMap(valuesOf).some(isTooLong) || literals.some(isTooLong)) return TOO_LONG;
-  if (part.lostDir !== null && part.lostDir.pattern === null && writesIntoCwd(part, name)) {
-    return {
-      rule: "protected-path-mention",
-      reason: `Refused: \`${name}\` writes into its folder after \`${part.lostDir.why}\`, a folder the gate can't follow. Run it after a \`cd\` to a plain path.`
-    };
-  }
-  const found2 = foundPath(part, ctx, dir);
-  if (found2 !== null) {
-    return {
-      rule: "protected-path-mention",
-      reason: `Refused: this \`find\` deletes, writes or runs a command from \`${displayPath(found2, root, home)}\`, which holds protected paths. Start it from a folder that holds none, or ask the user to run it with \`!\`.`
-    };
-  }
-  const named2 = words.flatMap(valuesOf).map((w) => namedPath(w, dir, ctx, !FOLDER_MAKERS.has(name))).find((p) => p !== null) ?? words.map((w) => namedPattern(part, w, dir, ctx)).find((p) => p !== null) ?? namedInScript(literals, dir, ctx);
-  const lostNamed = named2 === null ? lostTailNamed(part, [...outputValues2(words, settings), ...literals.map((value) => ({ value, folder: false }))], ctx) : null;
-  if (lostNamed !== null) {
-    return {
-      rule: "protected-path-mention",
-      reason: `Refused: \`${name}\` names \`${lostNamed}\` after \`${part.lostDir?.why}\`, in a folder the gate can't follow, where it could be a protected path. Instead, ${LOST_CD_HINT}, or ask the user to run it with \`!\`.`
-    };
-  }
-  if (named2 === null) return null;
-  const shown2 = import_node_path23.default.isAbsolute(named2) ? displayPath(named2, root, home) : named2;
-  if (SCRIPT_LAUNCHERS.has(name)) {
-    return {
-      rule: "protected-path-mention",
-      reason: `Refused: \`${name}\` runs a script that names a protected path: \`${shortened(launchedScript(name, part.words))}\`. Ask the user to run it with \`!\`.`
-    };
-  }
-  return {
-    rule: "protected-path-mention",
-    reason: `Refused: \`${name}\` names \`${shown2}\`, a protected path, and only read-only programs may. To read it, use the Read tool or \`cat ${shown2} | ${name}\`. Ask the user to run it with \`!\`.`
   };
 }
 
@@ -9176,7 +10094,6 @@ var PUSH_KEYS = [
   "man.*.cmd",
   "man.*.path"
 ];
-var PUSH_SECTIONS = new Set(PUSH_KEYS.map((key2) => key2.split(".")[0]));
 var CONFIG_FILE_OPTIONS2 = [
   { name: "global", negatable: true },
   { name: "system", negatable: true },
@@ -9357,9 +10274,9 @@ function pushKeyWritten(args) {
   const key2 = positional[0];
   if (key2 === void 0 || read || !(write || section || positional.length >= 2)) return null;
   const lower = key2.toLowerCase();
-  if (section) return PUSH_SECTIONS.has(lower.split(".")[0]) ? key2 : null;
+  if (section) return positional.slice(0, 2).find((name) => WRITE_SECTIONS.has(name.toLowerCase().split(".")[0])) ?? null;
   if (keyMatches(CREDENTIAL_KEYS, lower)) return positional[1] !== void 0 && helperRuns(positional[1]) ? key2 : null;
-  return PUSH_KEYS.some((pattern) => matchCommand(pattern, [lower])) ? key2 : null;
+  return keyMatches(PUSH_KEYS, lower) || keyMatches(RUN_ANY_KEYS, lower) ? key2 : null;
 }
 function variableChange(part) {
   const assigned = part.assignments.find((name) => GIT_REPO_VARIABLE.test(name) || part.program === null && setupVariable(name));
@@ -9408,8 +10325,13 @@ function cantCheck(why, subcommand = "push") {
     reason: `Refused: this \`git ${subcommand}\` can't be checked: ${why}. ${advice}`
   };
 }
+function remoteVerb(args) {
+  const at = args.findIndex((a) => !a.startsWith("-"));
+  return at === -1 ? { verb: void 0, rest: [] } : { verb: args[at], rest: args.slice(at + 1) };
+}
 function addsMirror(git) {
-  return git.subcommand === "remote" && git.args[0] === "add" && git.args.some((a) => a === "--mirror" || a.startsWith("--mirror="));
+  if (git.subcommand !== "remote" || remoteVerb(git.args).verb !== "add") return false;
+  return git.args.some((a) => a === "--mirror" || a.startsWith("--mirror="));
 }
 function lostFolder(part) {
   if (part.lostDir === null) return null;
@@ -9442,6 +10364,7 @@ function checkCommitSetup(part, earlier, count) {
   return null;
 }
 function checkPushSetup(part, earlier, count = earlier.length) {
+  if (settingsOf(part).some(([name]) => name === "GIT_ALLOW_PROTOCOL")) return ALLOW_PROTOCOL_REFUSAL;
   const planted = plantedConfig(part, earlier, count);
   if (planted !== null) {
     return {
@@ -9449,6 +10372,8 @@ function checkPushSetup(part, earlier, count = earlier.length) {
       reason: `Refused: \`git ${part.git?.subcommand}\` with \`${planted}\` plants config or hooks in the new repository, which can change where pushes go or what git runs. Ask the user to run it with \`!\`.`
     };
   }
+  if (carriesKey(OSS_KEYS, part, earlier, count)) return OSS_REFUSAL;
+  if (carriesKey(REF_HISTORY_KEYS, part, earlier, count)) return REF_HISTORY_REFUSAL;
   const tty = fakeTtyPager(part, earlier, count);
   if (tty !== null) return runsRefusal(tty, `\`git ${part.git?.subcommand}\` (it has a terminal, so git starts its pager)`);
   const runs = runConfig(part, earlier, count) ?? uploadProgram(part);
@@ -9462,6 +10387,8 @@ function checkPushSetup(part, earlier, count = earlier.length) {
         reason: `Refused: the gate can't read \`git config\` option \`${key2.unreadable}\` (one git doesn't have, or short for several), so it can't tell which key is written. Spell the options in full.`
       };
     }
+    if (keyMatches(OSS_KEYS, key2) || key2.toLowerCase() === "oss") return OSS_REFUSAL;
+    if (keyMatches(REF_HISTORY_KEYS, key2)) return REF_HISTORY_REFUSAL;
     return {
       rule: "protected-branch",
       reason: `Refused: \`git config ${key2}\` changes where pushes go or what git runs. Ask the user to change it with \`!\`.`
@@ -9488,6 +10415,123 @@ function checkPushSetup(part, earlier, count = earlier.length) {
   }
   const program = uploadProgram(part);
   return program === null ? programVariableRefusal(part, earlier, count) : runsRefusal(program, "`git push`");
+}
+var REMOTE_URL_KEYS = ["remote.*.url", "remote.*.pushurl"];
+var INSTEAD_OF = /^url\.(.*)\.(?:push)?insteadof$/i;
+var REMOTE_FETCH = /^remote\.(.*)\.fetch$/i;
+function forgesRemote(key2, value) {
+  if (keyMatches(REMOTE_URL_KEYS, key2)) return value === void 0 || isLocalUrl(value);
+  const base = INSTEAD_OF.exec(key2);
+  if (base !== null) return isLocalUrl(base[1]);
+  const name = REMOTE_FETCH.exec(key2);
+  if (name === null) return false;
+  if (value === void 0) return true;
+  const spec = value.startsWith("+") ? value.slice(1) : value;
+  if (spec.includes(":") && replaceRef(rawDestination(spec))) return true;
+  return spec.includes(":") && remoteTracking(rawDestination(spec), true) && spec !== `refs/heads/*:refs/remotes/${name[1]}/*`;
+}
+var REMOTE_ADD_VALUES = /* @__PURE__ */ new Set(["-t", "--track", "-m", "--master"]);
+var LOCAL_REMOTE_REFUSAL = {
+  rule: "protected-branch",
+  reason: "Refused: this git call points a remote at a path on this machine or a `file://` URL, which can be the repository itself and forge its remote-tracking refs. Ask the user to add it with `!`."
+};
+function checkLocalRemote(part, earlier, count = earlier.length) {
+  return part.git !== null && part.git.subcommand !== "push" && localRemote(part.git, part, earlier, count) ? LOCAL_REMOTE_REFUSAL : null;
+}
+function localRemote(git, part, earlier, count) {
+  if (git.subcommand === "remote") {
+    const { verb, rest } = remoteVerb(git.args);
+    if ((verb === "add" || verb === "set-url" && !rest.includes("--delete")) && isLocalUrl(positionalsOf(rest, REMOTE_ADD_VALUES)[1] ?? "")) return true;
+  }
+  const globals = part.words.slice(1, part.words.length - git.args.length - 1);
+  for (let i = 0; i < globals.length; i++) {
+    const w = globals[i];
+    const env = w === "--config-env" ? globals[i + 1] : w.startsWith("--config-env=") ? w.slice("--config-env=".length) : void 0;
+    if (env !== void 0 && forgesRemote(keyOf(env), void 0)) return true;
+    const setting = w === "-c" ? globals[i + 1] : void 0;
+    if (setting !== void 0 && forgesRemote(keyOf(setting), setting.includes("=") ? setting.slice(setting.indexOf("=") + 1) : void 0)) return true;
+  }
+  const settings = callSettings(part, earlier, count);
+  return settings.some(([name, value]) => {
+    if (!CONFIG_KEY_VARIABLE.test(name)) return false;
+    const paired = settings.find(([other]) => other === name.replace("_KEY_", "_VALUE_"));
+    return forgesRemote(value, paired?.[1]);
+  });
+}
+var ALLOW_PROTOCOL_REFUSAL = {
+  rule: "protected-branch",
+  reason: "Refused: `GIT_ALLOW_PROTOCOL` lets git use protocols such as `ext::`, which runs a command. Ask the user to run it with `!`."
+};
+function checkAllowProtocolMention(command, parts = []) {
+  const plain = command.replace(/['"\\]/g, "");
+  if (plain.includes("GIT_ALLOW_PROTOCOL")) return ALLOW_PROTOCOL_REFUSAL;
+  return runsGit(parts) && (INDIRECT_ASSIGNMENT.test(command) || parts.some(setsUnreadableName)) ? ALLOW_PROTOCOL_REFUSAL : null;
+}
+var INDIRECT_ASSIGNMENT = /\$\{(?:!|\([^)]*P[^)]*\))[^}]*?=/;
+function runsGit(parts) {
+  return parts.some((p) => p.git !== null || p.words.includes("git"));
+}
+function checkTransportMention(command, parts) {
+  return runsGit(parts) && /(?:^|[^A-Za-z0-9+:-])(?:ext|fd)::/i.test(command.replace(/['"\\]/g, "")) ? TRANSPORT_REFUSAL : null;
+}
+var TRANSPORT_REFUSAL = {
+  rule: "protected-branch",
+  reason: "Refused: an `ext::` or `fd::` git transport runs a command or talks over an open file. Ask the user to run it with `!`."
+};
+var VALUE_OPTIONS2 = { read: "ptudnNi", mapfile: "udnOsCc", readarray: "udnOsCc" };
+function namesSetBy(program, args) {
+  if (program === "getopts") return args[1] === void 0 ? [] : [args[1]];
+  const names = [];
+  const values = VALUE_OPTIONS2[program] ?? "";
+  let options = true;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (options && a === "--") options = false;
+    else if (options && /^-[A-Za-z]/.test(a)) {
+      for (let k = 1; k < a.length; k++) {
+        const letter = a[k];
+        const attached = a.slice(k + 1);
+        const name = program === "read" && letter === "a" || (program === "printf" || program === "print") && letter === "v";
+        if (!name && !values.includes(letter)) continue;
+        const operand = attached !== "" ? attached : args[++i] ?? "";
+        if (name || attached === "" && !/^[0-9]+$/.test(operand)) names.push(operand);
+        break;
+      }
+    } else if (program !== "printf" && program !== "print") names.push(a);
+  }
+  return names;
+}
+function setsUnreadableName(part) {
+  const program = part.program;
+  if (program === null) return false;
+  const unknownName = (w) => w.slice(0, w.includes("=") ? w.indexOf("=") : void 0).includes(UNKNOWN);
+  if (part.wrappers.includes("env") && program.includes(UNKNOWN) && program.includes("=")) return true;
+  const args = part.words.slice(1);
+  if (VARIABLE_SETTERS2.has(program)) {
+    if (program !== "export" && program !== "readonly" && args.some((a) => /^-[A-Za-z]*n/.test(a))) return true;
+    return args.some((a) => !a.startsWith("-") && unknownName(a));
+  }
+  if (!(program in VALUE_OPTIONS2) && program !== "printf" && program !== "print" && program !== "getopts") return false;
+  return namesSetBy(program, args).some((name) => name.includes(UNKNOWN) || name.replace(/['"\\]/g, "") === "GIT_ALLOW_PROTOCOL");
+}
+var REF_HISTORY_REFUSAL = {
+  rule: "protected-branch",
+  reason: "Refused: this git setting changes or erases ref history (reflogs), which a lost commit is found by. Ask the user to change it with `!`."
+};
+var OSS_REFUSAL = {
+  rule: "protected-branch",
+  reason: "Refused: this git call writes an OSS setting (the `oss` config section), which OSS reads to decide what a phase ships. Ask the user to change it with `!`."
+};
+function carriesKey(keys, part, earlier, count) {
+  const git = part.git;
+  if (git === null) return false;
+  const globals = part.words.slice(1, part.words.length - git.args.length - 1);
+  for (let i = 0; i < globals.length; i++) {
+    const w = globals[i];
+    const setting = w === "-c" || w === "--config-env" ? globals[i + 1] : w.startsWith("--config-env=") ? w.slice("--config-env=".length) : void 0;
+    if (setting !== void 0 && keyMatches(keys, keyOf(setting))) return true;
+  }
+  return callSettings(part, earlier, count).some(([name, value]) => CONFIG_KEY_VARIABLE.test(name) && keyMatches(keys, value));
 }
 function runsRefusal(what, where) {
   return {
@@ -9546,7 +10590,10 @@ function plantedConfig(part, earlier, count) {
   }
   return null;
 }
-var RUN_ANY_KEYS = ["core.hookspath", "alias.*", "include.path", "includeif.*.path", "protocol.allow", "protocol.ext.allow"];
+var REF_HISTORY_KEYS = ["core.logallrefupdates", "core.bare", "gc.reflogexpire*", "gc.*.reflogexpire*"];
+var OSS_KEYS = ["oss.*"];
+var RUN_ANY_KEYS = ["core.hookspath", "alias.*", "include.path", "includeif.*.path", "protocol.allow", "protocol.*.allow", ...REF_HISTORY_KEYS, ...OSS_KEYS];
+var WRITE_SECTIONS = new Set([...PUSH_KEYS, ...RUN_ANY_KEYS].map((key2) => key2.split(".")[0]));
 var RUN_COMMAND_KEYS = [
   "core.fsmonitor",
   "core.editor",
@@ -9769,6 +10816,7 @@ function runConfig(part, earlier, count) {
     if (w !== "-c" || i + 1 >= globals.length) continue;
     const setting = globals[++i];
     const value = setting.includes("=") ? setting.slice(setting.indexOf("=") + 1) : "true";
+    if (git.subcommand === "submodule" && keyOf(setting).toLowerCase() === "protocol.file.allow") continue;
     if (runsProgram(keyOf(setting), value)) return keyOf(setting);
   }
   const settings = callSettings(part, earlier, count);
@@ -9815,14 +10863,14 @@ function fakeTtyPager(part, earlier, count) {
 }
 
 // src/tool-gate/rules/red-cycle.ts
-var import_node_path24 = __toESM(require("node:path"), 1);
+var import_node_path26 = __toESM(require("node:path"), 1);
 var NO_RUN = "Refused: No failing test recorded in this build. Write a failing test and run it on its own with a test command, unpiped (for example `npx vitest run <file>` or `pytest <file>`). Another command that names a test file or has the word test, spec or check in it, and fails, is taken as this build's test command.";
 var DEV_DOCS = ".oss/dev/**";
 function isSourceFile(filePath, settings, root, home) {
   return (
     // Any case: `foo.TS` is the same kind of file. Test-file patterns and the dev-docs folder stay
     // case-sensitive here, since matching them more widely would exempt more files from the rule.
-    settings.sourceExtensions.some((ext) => ext.toLowerCase() === import_node_path24.default.extname(filePath).toLowerCase()) && !matchPath(DEV_DOCS, filePath, { home, root }) && !matchAnyPath(settings.testFilePatterns, filePath, { home, root })
+    settings.sourceExtensions.some((ext) => ext.toLowerCase() === import_node_path26.default.extname(filePath).toLowerCase()) && !matchPath(DEV_DOCS, filePath, { home, root }) && !matchAnyPath(settings.testFilePatterns, filePath, { home, root })
   );
 }
 function checkRedCycle(call, settings, root, home, workflow, store) {
@@ -9837,7 +10885,7 @@ function checkRedCycle(call, settings, root, home, workflow, store) {
   if (cycle.lastResult === "green") {
     return {
       rule: "red-cycle",
-      reason: `Refused: \`${import_node_path24.default.relative(root, call.filePath)}\` is not in this cycle and the last test run was green. Write a failing test and run it before editing a new source file.`
+      reason: `Refused: \`${import_node_path26.default.relative(root, call.filePath)}\` is not in this cycle and the last test run was green. Write a failing test and run it before editing a new source file.`
     };
   }
   store.writeCycle({ ...cycle, files: [...cycle.files, call.filePath] });
@@ -9928,7 +10976,7 @@ function checkTags(part, settings) {
 }
 
 // src/tool-gate/rules/unreadable.ts
-var import_node_path25 = __toESM(require("node:path"), 1);
+var import_node_path27 = __toESM(require("node:path"), 1);
 var GIT_WRITES = /* @__PURE__ */ new Set([
   "push",
   "commit",
@@ -9969,7 +11017,7 @@ function checkUnknownGitOption(part) {
     reason: `Refused: \`git ${git.unknownOption}\` is a git option the gate doesn't know, so it can't tell what \`git \u2026 ${risky}\` runs. Run it without that option.`
   };
 }
-var INTERPRETERS3 = /* @__PURE__ */ new Set([
+var INTERPRETERS4 = /* @__PURE__ */ new Set([
   "bash",
   "sh",
   "zsh",
@@ -9990,7 +11038,7 @@ var INTERPRETERS3 = /* @__PURE__ */ new Set([
   "expect"
 ]);
 var PYTHON4 = /^python[0-9.]*$/;
-var TEXT_ONLY = { realpath: (p) => import_node_path25.default.normalize(p) };
+var TEXT_ONLY = { realpath: (p) => import_node_path27.default.normalize(p) };
 function tooComplex(reason) {
   return {
     rule: "unreadable",
@@ -10000,7 +11048,7 @@ function tooComplex(reason) {
 function riskIn(part, settings, places, home) {
   const { name } = part;
   if (name === "git" && part.git !== null && GIT_WRITES.has(part.git.subcommand)) return `runs \`git ${part.git.subcommand}\``;
-  if (name !== null && (INTERPRETERS3.has(name) || PYTHON4.test(name))) return `runs \`${name}\``;
+  if (name !== null && (INTERPRETERS4.has(name) || PYTHON4.test(name))) return `runs \`${name}\``;
   if (part.hiddenScript !== void 0) return part.hiddenScript;
   if (scriptFactsOf(name, part.words.slice(1))?.unreadable != null) return `runs a \`${name}\` script the gate can't read`;
   const dir = part.git?.dir ?? part.cwd;
@@ -10026,158 +11074,14 @@ function checkUnreadable(reason, parts, settings, root, home, caseInsensitive) {
   return null;
 }
 
-// src/tool-gate/rules/verdict-capture-call.ts
-var NAMES = ["oss-verdict-capture.sh", "verdict-capture.cjs", "verdict-capture.js"];
-var SEPARATORS = /[\s'"`;|&()<>=${}\\,]+/;
-var GLOB2 = /[*?[]/;
-var SET = /\[[!^]?\]?[^\]]*\]?/;
-var FORM_END = /[\s;|&()<>'"`${}]/;
-function specialSetsAsAny(text) {
-  const closing = /* @__PURE__ */ new Map();
-  const closeOf = (delim, from) => {
-    const cached = closing.get(delim);
-    if (cached !== void 0 && (cached === -1 || cached >= from)) return cached;
-    const at = text.indexOf(`${delim}]`, from);
-    closing.set(delim, at);
-    return at;
-  };
-  let wordEnd = -1;
-  const wordEndOf = (from) => {
-    if (wordEnd >= from) return wordEnd;
-    wordEnd = from;
-    while (wordEnd < text.length && !FORM_END.test(text[wordEnd])) wordEnd += 1;
-    return wordEnd;
-  };
-  let out = "";
-  let i = 0;
-  while (i < text.length) {
-    if (text[i] !== "[") {
-      out += text[i];
-      i += 1;
-      continue;
-    }
-    let j = i + 1;
-    if (text[j] === "!" || text[j] === "^") j += 1;
-    if (text[j] === "]") j += 1;
-    let special = false;
-    for (; j < text.length && text[j] !== "]" && !FORM_END.test(text[j]); j += 1) {
-      if (text[j] === "\\") {
-        special = true;
-        if (j + 1 < text.length && !FORM_END.test(text[j + 1])) j += 1;
-      } else if (text[j] === "[" && ":=.".includes(text[j + 1] ?? "x")) {
-        const at = closeOf(text[j + 1], j + 2);
-        if (at >= 0 && at < wordEndOf(j + 2)) {
-          special = true;
-          j = at + 1;
-        }
-      }
-    }
-    if (text[j] !== "]") {
-      out += text.slice(i, j);
-      i = j;
-    } else {
-      out += special ? "?" : text.slice(i, j + 1);
-      i = j + 1;
-    }
-  }
-  return out;
-}
-function globTokens(piece) {
-  const tokens = [];
-  for (const m of piece.matchAll(new RegExp(`${SET.source}|[*?]|[^*?[]`, "g"))) {
-    const c = m[0];
-    if (c === "*") tokens.push("*");
-    else if (c === "?" || c.startsWith("[") && (c.length < 2 || !c.endsWith("]") || /^\[[!^]?\]$/.test(c))) {
-      tokens.push(() => true);
-    } else if (c.startsWith("[")) tokens.push(bracketTest(c.slice(1, -1)));
-    else tokens.push((x) => x === c);
-  }
-  return tokens;
-}
-function bracketTest(body) {
-  const negate = body.startsWith("!") || body.startsWith("^");
-  const set = negate ? body.slice(1) : body;
-  return (c) => {
-    let hit = false;
-    for (let i = 0; i < set.length; i += 1) {
-      if (set[i + 1] === "-" && i + 2 < set.length) {
-        if (c >= set[i] && c <= set[i + 2]) hit = true;
-        i += 2;
-      } else if (set[i] === c) hit = true;
-    }
-    return hit !== negate;
-  };
-}
-function globMatch(tokens, name) {
-  let t = 0;
-  let s = 0;
-  let star = -1;
-  let starS = 0;
-  while (s < name.length) {
-    const token = tokens[t];
-    if (token === "*") {
-      star = t;
-      starS = s;
-      t += 1;
-    } else if (token !== void 0 && token(name[s])) {
-      t += 1;
-      s += 1;
-    } else if (star >= 0) {
-      t = star + 1;
-      starS += 1;
-      s = starS;
-    } else return false;
-  }
-  while (tokens[t] === "*") t += 1;
-  return t === tokens.length;
-}
-function globNames(piece, folder) {
-  const tokens = globTokens(piece);
-  if (!NAMES.some((name) => globMatch(tokens, name))) return false;
-  const literals = piece.split(new RegExp(`${SET.source}|[*?]`));
-  return literals.some(writesStem) || folder !== void 0 && /^(?:hooks|cli)$/.test(folder);
-}
-function writesStem(literal2) {
-  if (literal2.length < 3) return false;
-  return NAMES.some((name) => {
-    const stemEnd = name.lastIndexOf(".");
-    for (let at = name.indexOf(literal2); at >= 0; at = name.indexOf(literal2, at + 1)) {
-      if (Math.min(at + literal2.length, stemEnd) - at >= 3) return true;
-    }
-    return false;
-  });
-}
-function hasLiteralName(text) {
-  return text.split(SEPARATORS).some((word) => word.split("/").some((segment) => NAMES.includes(segment)));
-}
-function namesVerdictCapture(text) {
-  const lower = text.toLowerCase();
-  if (hasLiteralName(lower)) return true;
-  for (const word of specialSetsAsAny(lower).split(SEPARATORS)) {
-    const segments = word.split("/");
-    for (const [i, segment] of segments.entries()) {
-      if (GLOB2.test(segment) && globNames(segment, segments[i - 1])) return true;
-    }
-  }
-  return false;
-}
-function checkVerdictCaptureCall(part, command) {
-  const texts = [command, ...part.words, ...part.assignmentValues, ...part.stdinScripts];
-  if (!texts.some(namesVerdictCapture)) return null;
-  return {
-    rule: "protected-path",
-    reason: "Refused: runs or names the OSS verdict capture (`oss-verdict-capture.sh`, `verdict-capture.cjs`, `verdict-capture.js`). Only Claude Code's own subagent hook runs it; a review verdict is captured when the review agent stops."
-  };
-}
-
 // src/tool-gate/gate.ts
 var import_node_os5 = __toESM(require("node:os"), 1);
 
 // src/tool-gate/sandbox.ts
 var import_node_child_process3 = require("node:child_process");
-var import_node_fs15 = __toESM(require("node:fs"), 1);
+var import_node_fs16 = __toESM(require("node:fs"), 1);
 var import_node_os3 = __toESM(require("node:os"), 1);
-var import_node_path26 = __toESM(require("node:path"), 1);
+var import_node_path28 = __toESM(require("node:path"), 1);
 var SANDBOX_EXEC = "/usr/bin/sandbox-exec";
 var ENV = "/usr/bin/env";
 var SHELL = ["/bin/bash", "--norc", "--noprofile", "-c"];
@@ -10216,9 +11120,9 @@ function inside(dir, root) {
 }
 function ancestorsUpTo(dir, top) {
   const out = [];
-  for (let at = import_node_path26.default.dirname(dir); inside(at, top); at = import_node_path26.default.dirname(at)) {
+  for (let at = import_node_path28.default.dirname(dir); inside(at, top); at = import_node_path28.default.dirname(at)) {
     out.push(at);
-    if (at === top || at === import_node_path26.default.dirname(at)) break;
+    if (at === top || at === import_node_path28.default.dirname(at)) break;
   }
   return out;
 }
@@ -10274,7 +11178,7 @@ function shellQuote2(word) {
   return `'${word.replaceAll("'", "'\\''")}'`;
 }
 function cacheEnv(root) {
-  const at = (name) => import_node_path26.default.join(root, name);
+  const at = (name) => import_node_path28.default.join(root, name);
   return {
     npm_config_cache: at("npm"),
     GOCACHE: at("go-build"),
@@ -10295,9 +11199,9 @@ function wrapCommand(command, profile, env) {
   const assignments = Object.entries(env).map(([name, value]) => shellQuote2(`${name}=${value}`));
   return [SANDBOX_EXEC, "-p", shellQuote2(profile), ENV, "-i", ...assignments, ...SHELL, shellQuote2(GROUP_WRAPPER), "oss-review", shellQuote2(command)].join(" ");
 }
-function realOrNull2(dir) {
+function realOrNull3(dir) {
   try {
-    return import_node_fs15.default.realpathSync(dir);
+    return import_node_fs16.default.realpathSync(dir);
   } catch {
     return null;
   }
@@ -10305,7 +11209,7 @@ function realOrNull2(dir) {
 function passwordHome() {
   try {
     const dir = import_node_os3.default.userInfo().homedir;
-    return import_node_path26.default.isAbsolute(dir) ? realOrNull2(dir) ?? dir : void 0;
+    return import_node_path28.default.isAbsolute(dir) ? realOrNull3(dir) ?? dir : void 0;
   } catch {
     return void 0;
   }
@@ -10313,19 +11217,19 @@ function passwordHome() {
 function darwinUserTemp() {
   const read = (0, import_node_child_process3.spawnSync)("/usr/bin/getconf", ["DARWIN_USER_TEMP_DIR"], { encoding: "utf8", timeout: timeLeft(500) });
   const dir = read.status === 0 ? read.stdout.trim() : "";
-  return import_node_path26.default.isAbsolute(dir) ? realOrNull2(dir) : null;
+  return import_node_path28.default.isAbsolute(dir) ? realOrNull3(dir) : null;
 }
 function ownPrivateFolder(dir) {
   try {
-    import_node_fs15.default.mkdirSync(dir, { mode: 448 });
+    import_node_fs16.default.mkdirSync(dir, { mode: 448 });
   } catch (error) {
     if (error.code !== "EEXIST") return false;
   }
   try {
-    const stat = import_node_fs15.default.lstatSync(dir);
+    const stat = import_node_fs16.default.lstatSync(dir);
     if (!stat.isDirectory() || stat.isSymbolicLink() || stat.uid !== process.getuid?.()) return false;
-    if ((stat.mode & 511) !== 448) import_node_fs15.default.chmodSync(dir, 448);
-    return (import_node_fs15.default.lstatSync(dir).mode & 511) === 448;
+    if ((stat.mode & 511) !== 448) import_node_fs16.default.chmodSync(dir, 448);
+    return (import_node_fs16.default.lstatSync(dir).mode & 511) === 448;
   } catch {
     return false;
   }
@@ -10333,24 +11237,24 @@ function ownPrivateFolder(dir) {
 var SAFE_ID2 = /^[A-Za-z0-9_-]{1,128}$/;
 function privateFolderPath(userTemp, sessionId, agentId) {
   const session = typeof sessionId === "string" && SAFE_ID2.test(sessionId) ? sessionId : "session";
-  const dir = import_node_path26.default.join(userTemp, "oss-review", session);
-  return typeof agentId === "string" && SAFE_ID2.test(agentId) ? import_node_path26.default.join(dir, agentId) : dir;
+  const dir = import_node_path28.default.join(userTemp, "oss-review", session);
+  return typeof agentId === "string" && SAFE_ID2.test(agentId) ? import_node_path28.default.join(dir, agentId) : dir;
 }
 function privateFolder2(userTemp, sessionId, agentId) {
   const dir = privateFolderPath(userTemp, sessionId, agentId);
-  const levels = [import_node_path26.default.join(userTemp, "oss-review"), ...import_node_path26.default.dirname(dir) === import_node_path26.default.join(userTemp, "oss-review") ? [] : [import_node_path26.default.dirname(dir)], dir];
-  return levels.every(ownPrivateFolder) && realOrNull2(dir) === dir ? dir : null;
+  const levels = [import_node_path28.default.join(userTemp, "oss-review"), ...import_node_path28.default.dirname(dir) === import_node_path28.default.join(userTemp, "oss-review") ? [] : [import_node_path28.default.dirname(dir)], dir];
+  return levels.every(ownPrivateFolder) && realOrNull3(dir) === dir ? dir : null;
 }
 function reviewUserTemp(platform, tmpdir, override) {
-  if (override !== void 0) return realOrNull2(override);
+  if (override !== void 0) return realOrNull3(override);
   if (platform === "darwin") return darwinUserTemp();
-  const given = tmpdir !== void 0 && import_node_path26.default.isAbsolute(tmpdir) ? tmpdir : "/tmp";
-  const real = realOrNull2(given);
+  const given = tmpdir !== void 0 && import_node_path28.default.isAbsolute(tmpdir) ? tmpdir : "/tmp";
+  const real = realOrNull3(given);
   return real === "/" ? null : real;
 }
 function sandboxSetting(file) {
   try {
-    const data = JSON.parse(import_node_fs15.default.readFileSync(file, "utf8"));
+    const data = JSON.parse(import_node_fs16.default.readFileSync(file, "utf8"));
     const sandbox = typeof data === "object" && data !== null ? data.sandbox : void 0;
     const enabled = typeof sandbox === "object" && sandbox !== null ? sandbox.enabled : void 0;
     return typeof enabled === "boolean" ? enabled : void 0;
@@ -10360,7 +11264,7 @@ function sandboxSetting(file) {
 }
 function hostSandboxOn(homes, env) {
   if (env.SANDBOX_RUNTIME === "1") return true;
-  const files = [...homes.flatMap((home) => [import_node_path26.default.join(home, ".claude", "settings.json"), import_node_path26.default.join(home, ".claude", "settings.local.json")]), MANAGED_SETTINGS];
+  const files = [...homes.flatMap((home) => [import_node_path28.default.join(home, ".claude", "settings.json"), import_node_path28.default.join(home, ".claude", "settings.local.json")]), MANAGED_SETTINGS];
   return files.map(sandboxSetting).reduce((on, setting) => setting ?? on, false);
 }
 var realRunner = (args) => {
@@ -10372,12 +11276,12 @@ function reviewContainment(opts, run = realRunner) {
   if (opts.disabled) return { kind: "fallback", why: "off" };
   if (opts.platform !== "darwin") return { kind: "fallback", why: "platform" };
   const optedOut = typeof opts.toolInput === "object" && opts.toolInput !== null && opts.toolInput.dangerouslyDisableSandbox === true;
-  const pwHome = opts.passwordHome === void 0 ? passwordHome() : realOrNull2(opts.passwordHome) ?? opts.passwordHome;
-  const homes = [...new Set([realOrNull2(opts.home) ?? opts.home, pwHome].filter((dir) => dir !== void 0))];
+  const pwHome = opts.passwordHome === void 0 ? passwordHome() : realOrNull3(opts.passwordHome) ?? opts.passwordHome;
+  const homes = [...new Set([realOrNull3(opts.home) ?? opts.home, pwHome].filter((dir) => dir !== void 0))];
   if (!optedOut && hostSandboxOn(opts.settingsHomes ?? homes, opts.env)) return { kind: "fallback", why: "host-sandbox" };
   const refused3 = (why) => ({ kind: "refused", reason: `${UNSAFE} (${why})` });
-  if (!import_node_path26.default.isAbsolute(opts.home) || !import_node_fs15.default.existsSync(SANDBOX_EXEC)) return refused3("no sandbox-exec, or HOME is not a full path");
-  const temp = opts.userTemp !== void 0 ? realOrNull2(opts.userTemp) : darwinUserTemp();
+  if (!import_node_path28.default.isAbsolute(opts.home) || !import_node_fs16.default.existsSync(SANDBOX_EXEC)) return refused3("no sandbox-exec, or HOME is not a full path");
+  const temp = opts.userTemp !== void 0 ? realOrNull3(opts.userTemp) : darwinUserTemp();
   if (temp === null) return refused3("no user temp folder");
   const privateDir = privateFolder2(temp, opts.sessionId, opts.agentId);
   if (privateDir === null) return refused3("its private folder is a link, not ours or not private");
@@ -10387,9 +11291,9 @@ function reviewContainment(opts, run = realRunner) {
   return {
     kind: "sandbox",
     wrap: (command, repos, hidden = []) => {
-      const all = [...new Set(repos.flatMap((repo) => [repo, realOrNull2(repo) ?? repo]))];
+      const all = [...new Set(repos.flatMap((repo) => [repo, realOrNull3(repo) ?? repo]))];
       if ([...all, ...homes].some((p) => inside(p, privateDir)) || all.some((repo) => inside(privateDir, repo))) return null;
-      return wrapCommand(command, reviewSandboxProfile({ ...base, repos: all, hidden: [...new Set(hidden.flatMap((h) => [h, realOrNull2(h) ?? h]))] }), env);
+      return wrapCommand(command, reviewSandboxProfile({ ...base, repos: all, hidden: [...new Set(hidden.flatMap((h) => [h, realOrNull3(h) ?? h]))] }), env);
     }
   };
 }
@@ -10397,14 +11301,14 @@ function reviewContainment(opts, run = realRunner) {
 // src/tool-gate/mounts.ts
 var import_node_child_process4 = require("node:child_process");
 var import_node_crypto = __toESM(require("node:crypto"), 1);
-var import_node_fs16 = __toESM(require("node:fs"), 1);
-var import_node_path27 = __toESM(require("node:path"), 1);
+var import_node_fs17 = __toESM(require("node:fs"), 1);
+var import_node_path29 = __toESM(require("node:path"), 1);
 var MOUNT_LINE = /^(.+?) on (.+?) (?:type \S+ )?\([^()]*\)$/;
 var unescape = (field) => field.replace(/\\([0-7]{3})/g, (_m, oct) => String.fromCharCode(parseInt(oct, 8)));
 function mountTable(platform, capMs) {
   if (platform === "linux") {
     try {
-      return import_node_fs16.default.readFileSync("/proc/self/mounts", "utf8").split("\n").flatMap((line) => {
+      return import_node_fs17.default.readFileSync("/proc/self/mounts", "utf8").split("\n").flatMap((line) => {
         const [device, at] = line.split(" ");
         return device === void 0 || at === void 0 || at === "" ? [] : [{ device: unescape(device), at: unescape(at) }];
       });
@@ -10437,21 +11341,21 @@ function notIn(a, b) {
 }
 function baselineFile(home, sessionId, agentId) {
   const owner = typeof agentId === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(agentId) ? agentId : "session";
-  return import_node_path27.default.join(sessionFolder(home, String(sessionId)), `${owner}.mounts`);
+  return import_node_path29.default.join(sessionFolder(home, String(sessionId)), `${owner}.mounts`);
 }
 function recordMountBaseline(home, sessionId, agentId, points) {
   const file = baselineFile(home, sessionId, agentId);
-  if (import_node_fs16.default.lstatSync(file, { throwIfNoEntry: false })?.isFile() === true) return;
+  if (import_node_fs17.default.lstatSync(file, { throwIfNoEntry: false })?.isFile() === true) return;
   const draft = `${file}.draft-${process.pid}-${import_node_crypto.default.randomBytes(6).toString("hex")}`;
   try {
     writePrivateFile(draft, JSON.stringify(points));
     try {
-      import_node_fs16.default.linkSync(draft, file);
+      import_node_fs17.default.linkSync(draft, file);
     } catch (error) {
       if (error.code !== "EEXIST") throw error;
     }
   } finally {
-    import_node_fs16.default.rmSync(draft, { force: true });
+    import_node_fs17.default.rmSync(draft, { force: true });
   }
 }
 var isEntry = (value) => typeof value === "object" && value !== null && typeof value.device === "string" && typeof value.at === "string";
@@ -10466,9 +11370,9 @@ function readMountBaseline(home, sessionId, agentId) {
 
 // src/tool-gate/nested-repos.ts
 var import_node_child_process5 = require("node:child_process");
-var import_node_fs17 = __toESM(require("node:fs"), 1);
+var import_node_fs18 = __toESM(require("node:fs"), 1);
 var import_node_os4 = __toESM(require("node:os"), 1);
-var import_node_path28 = __toESM(require("node:path"), 1);
+var import_node_path30 = __toESM(require("node:path"), 1);
 var NOT_WALKED = ["node_modules", "target", ".venv", "venv", "__pycache__", ".gradle", "Pods", "DerivedData", ".build", ".tox"];
 var CHUNK_BYTES = 1024 * 1024;
 var GITLINK = Buffer.from("160000 ");
@@ -10486,7 +11390,7 @@ function keptEntries(fd, keep) {
   const buffer = Buffer.alloc(CHUNK_BYTES);
   let rest = Buffer.alloc(0);
   let at = 0;
-  for (let read = import_node_fs17.default.readSync(fd, buffer, 0, CHUNK_BYTES, at); read > 0; read = import_node_fs17.default.readSync(fd, buffer, 0, CHUNK_BYTES, at)) {
+  for (let read = import_node_fs18.default.readSync(fd, buffer, 0, CHUNK_BYTES, at); read > 0; read = import_node_fs18.default.readSync(fd, buffer, 0, CHUNK_BYTES, at)) {
     at += read;
     let data = Buffer.concat([rest, buffer.subarray(0, read)]);
     for (let end = data.indexOf(0); end !== -1; end = data.indexOf(0)) {
@@ -10499,17 +11403,17 @@ function keptEntries(fd, keep) {
   return kept;
 }
 function tempParent(tempRoot) {
-  const parent = import_node_path28.default.join(tempRoot, `${TEMP_PREFIX}${process.getuid?.() ?? "user"}`);
+  const parent = import_node_path30.default.join(tempRoot, `${TEMP_PREFIX}${process.getuid?.() ?? "user"}`);
   try {
-    import_node_fs17.default.mkdirSync(parent, { mode: 448 });
+    import_node_fs18.default.mkdirSync(parent, { mode: 448 });
   } catch {
   }
-  const stat = import_node_fs17.default.lstatSync(parent, { throwIfNoEntry: false });
+  const stat = import_node_fs18.default.lstatSync(parent, { throwIfNoEntry: false });
   if (stat === void 0 || !stat.isDirectory() || stat.uid !== process.getuid?.() || (stat.mode & 63) !== 0) return tempRoot;
-  for (const name of import_node_fs17.default.readdirSync(parent)) {
-    const dir = import_node_path28.default.join(parent, name);
-    const age = Date.now() - (import_node_fs17.default.lstatSync(dir, { throwIfNoEntry: false })?.mtimeMs ?? Date.now());
-    if (name.startsWith(TEMP_PREFIX) && age > STALE_MS) import_node_fs17.default.rmSync(dir, { recursive: true, force: true });
+  for (const name of import_node_fs18.default.readdirSync(parent)) {
+    const dir = import_node_path30.default.join(parent, name);
+    const age = Date.now() - (import_node_fs18.default.lstatSync(dir, { throwIfNoEntry: false })?.mtimeMs ?? Date.now());
+    if (name.startsWith(TEMP_PREFIX) && age > STALE_MS) import_node_fs18.default.rmSync(dir, { recursive: true, force: true });
   }
   return parent;
 }
@@ -10571,12 +11475,12 @@ function answerNestedGit(message, tracker, reply) {
 }
 function realGitRunIn(parent, gitBin) {
   return async (args, cwd, keep, limitMs) => {
-    const dir = import_node_fs17.default.mkdtempSync(import_node_path28.default.join(parent, TEMP_PREFIX));
+    const dir = import_node_fs18.default.mkdtempSync(import_node_path30.default.join(parent, TEMP_PREFIX));
     let fd;
     try {
-      fd = import_node_fs17.default.openSync(import_node_path28.default.join(dir, "out"), "w+", 384);
+      fd = import_node_fs18.default.openSync(import_node_path30.default.join(dir, "out"), "w+", 384);
     } finally {
-      import_node_fs17.default.rmSync(dir, { recursive: true, force: true });
+      import_node_fs18.default.rmSync(dir, { recursive: true, force: true });
     }
     try {
       const run = await fileRunner(gitBin ?? gitBinary(), args, cwd, fd, limitMs);
@@ -10584,7 +11488,7 @@ function realGitRunIn(parent, gitBin) {
       if (run.failed || run.status !== 0) return { status: run.status, stdout: "", timedOut: false };
       return { status: 0, stdout: keptEntries(fd, keep).map((entry) => `${entry}\0`).join(""), timedOut: false };
     } finally {
-      import_node_fs17.default.closeSync(fd);
+      import_node_fs18.default.closeSync(fd);
     }
   };
 }
@@ -10593,17 +11497,17 @@ function inside2(p, root) {
   return p.startsWith(`${root}/`);
 }
 function worktrees(commonDir) {
-  const dir = import_node_path28.default.join(commonDir, "worktrees");
+  const dir = import_node_path30.default.join(commonDir, "worktrees");
   let names;
   try {
-    names = import_node_fs17.default.readdirSync(dir);
+    names = import_node_fs18.default.readdirSync(dir);
   } catch {
     return [];
   }
   return names.flatMap((name) => {
     try {
-      const text = import_node_fs17.default.readFileSync(import_node_path28.default.join(dir, name, "gitdir"), "utf8").trim();
-      return import_node_path28.default.isAbsolute(text) ? [import_node_fs17.default.realpathSync(import_node_path28.default.dirname(text))] : [];
+      const text = import_node_fs18.default.readFileSync(import_node_path30.default.join(dir, name, "gitdir"), "utf8").trim();
+      return import_node_path30.default.isAbsolute(text) ? [import_node_fs18.default.realpathSync(import_node_path30.default.dirname(text))] : [];
     } catch {
       return [];
     }
@@ -10627,7 +11531,7 @@ async function askGit(top, run) {
 async function nestedRepos(top, dirs, named2, opts = {}) {
   let real;
   try {
-    real = import_node_fs17.default.realpathSync(dirs.commonDir);
+    real = import_node_fs18.default.realpathSync(dirs.commonDir);
   } catch {
     return { kind: "unknown" };
   }
@@ -10635,7 +11539,7 @@ async function nestedRepos(top, dirs, named2, opts = {}) {
   if (entries === "timeout") return { kind: "timeout" };
   if (entries === "unknown") return { kind: "unknown" };
   const trees = worktrees(real).filter((dir) => inside2(dir, top));
-  const repos = [.../* @__PURE__ */ new Set([...entries.map((entry) => import_node_path28.default.join(top, entry)), ...trees])].filter((dir) => !named2.includes(dir));
+  const repos = [.../* @__PURE__ */ new Set([...entries.map((entry) => import_node_path30.default.join(top, entry)), ...trees])].filter((dir) => !named2.includes(dir));
   return { kind: "found", repos };
 }
 
@@ -10651,11 +11555,11 @@ var HOOK_EVENTS = /* @__PURE__ */ new Set(["PreToolUse", "PostToolUse", "PostToo
 function tempRoots(ctx) {
   const roots = ["/tmp", "/private/tmp"];
   const tmpdir = ctx.tmpdir;
-  if (tmpdir === void 0 || !import_node_path29.default.isAbsolute(tmpdir)) return roots;
-  const given = import_node_path29.default.normalize(tmpdir).replace(/(.)\/+$/, "$1");
+  if (tmpdir === void 0 || !import_node_path31.default.isAbsolute(tmpdir)) return roots;
+  const given = import_node_path31.default.normalize(tmpdir).replace(/(.)\/+$/, "$1");
   let real = given;
   try {
-    real = import_node_fs18.default.realpathSync(given);
+    real = import_node_fs19.default.realpathSync(given);
   } catch {
   }
   return given === "/" || real === "/" ? roots : [...roots, given, real];
@@ -10666,28 +11570,28 @@ function isRecord2(value) {
 function readHook(input) {
   const data = JSON.parse(input);
   if (typeof data !== "object" || data === null) throw new Error("hook input is not an object");
-  const record2 = data;
-  if (typeof record2.cwd !== "string" || typeof record2.tool_name !== "string") {
+  const record3 = data;
+  if (typeof record3.cwd !== "string" || typeof record3.tool_name !== "string") {
     throw new Error("hook input has no cwd or tool_name");
   }
   return {
-    cwd: record2.cwd,
-    hookEventName: typeof record2.hook_event_name === "string" ? record2.hook_event_name : "",
-    toolName: record2.tool_name,
-    toolInput: record2.tool_input,
-    error: typeof record2.error === "string" ? record2.error : void 0,
-    isInterrupt: record2.is_interrupt === true,
-    agent: callingAgentOf(record2),
-    background: isRecord2(record2.tool_input) && record2.tool_input.run_in_background === true,
-    sessionId: record2.session_id,
-    agentId: record2.agent_id,
-    ...isRecord2(record2.tool_response) && typeof record2.tool_response.stdout === "string" ? { stdout: record2.tool_response.stdout } : {}
+    cwd: record3.cwd,
+    hookEventName: typeof record3.hook_event_name === "string" ? record3.hook_event_name : "",
+    toolName: record3.tool_name,
+    toolInput: record3.tool_input,
+    error: typeof record3.error === "string" ? record3.error : void 0,
+    isInterrupt: record3.is_interrupt === true,
+    agent: callingAgentOf(record3),
+    background: isRecord2(record3.tool_input) && record3.tool_input.run_in_background === true,
+    sessionId: record3.session_id,
+    agentId: record3.agent_id,
+    ...isRecord2(record3.tool_response) && typeof record3.tool_response.stdout === "string" ? { stdout: record3.tool_response.stdout } : {}
   };
 }
 function repoRootOf(cwd) {
-  for (let dir = cwd; ; dir = import_node_path29.default.dirname(dir)) {
-    if (import_node_fs18.default.existsSync(import_node_path29.default.join(dir, ".git"))) return dir;
-    if (import_node_path29.default.dirname(dir) === dir) return cwd;
+  for (let dir = cwd; ; dir = import_node_path31.default.dirname(dir)) {
+    if (import_node_fs19.default.existsSync(import_node_path31.default.join(dir, ".git"))) return dir;
+    if (import_node_path31.default.dirname(dir) === dir) return cwd;
   }
 }
 function toplevelOf(dir) {
@@ -10695,7 +11599,7 @@ function toplevelOf(dir) {
   return repo.kind === "repo" ? repo.top : null;
 }
 function projectRootOf(projectDir, cwd) {
-  const usable = projectDir !== void 0 && import_node_path29.default.isAbsolute(projectDir) && import_node_fs18.default.statSync(projectDir, { throwIfNoEntry: false })?.isDirectory() === true;
+  const usable = projectDir !== void 0 && import_node_path31.default.isAbsolute(projectDir) && import_node_fs19.default.statSync(projectDir, { throwIfNoEntry: false })?.isDirectory() === true;
   return usable ? projectDir : repoRootOf(cwd);
 }
 function reviewedRepos(ctx) {
@@ -10703,24 +11607,24 @@ function reviewedRepos(ctx) {
   const top = toplevelOf(ctx.hook.cwd);
   let named2 = [];
   try {
-    named2 = import_node_path29.default.isAbsolute(ctx.home) ? reviewedReposFor(ctx.home, ctx.hook.sessionId) : [];
+    named2 = import_node_path31.default.isAbsolute(ctx.home) ? reviewedReposFor(ctx.home, ctx.hook.sessionId) : [];
   } catch {
   }
   return [.../* @__PURE__ */ new Set([ctx.root, ...top === null ? [] : [top], ...named2])];
 }
 function homesOf(home) {
-  return [...new Set([home, import_node_os5.default.userInfo().homedir].filter((dir) => import_node_path29.default.isAbsolute(dir)))];
+  return [...new Set([home, import_node_os5.default.userInfo().homedir].filter((dir) => import_node_path31.default.isAbsolute(dir)))];
 }
 function isToplevel(dir) {
   try {
-    return toplevelOf(dir) === import_node_fs18.default.realpathSync(dir);
+    return toplevelOf(dir) === import_node_fs19.default.realpathSync(dir);
   } catch {
     return false;
   }
 }
 function namedRepos(ctx) {
   try {
-    return import_node_path29.default.isAbsolute(ctx.home) ? reviewedReposFor(ctx.home, ctx.hook.sessionId) : [];
+    return import_node_path31.default.isAbsolute(ctx.home) ? reviewedReposFor(ctx.home, ctx.hook.sessionId) : [];
   } catch {
     return [];
   }
@@ -10732,7 +11636,7 @@ async function readableRepos(ctx) {
   const tops = [.../* @__PURE__ */ new Set([...isToplevel(ctx.root) ? [ctx.root] : [], ...top === null ? [] : [top], ...named2.filter(isToplevel)])];
   const repos = [.../* @__PURE__ */ new Set([...tops, ...tops.flatMap(gitFoldersOf)])];
   const hidden = [];
-  for (const top2 of new Set(tops.map((dir) => import_node_fs18.default.realpathSync(dir)))) {
+  for (const top2 of new Set(tops.map((dir) => import_node_fs19.default.realpathSync(dir)))) {
     const repo = findRepo(top2);
     const nested = repo.kind === "repo" ? await nestedRepos(top2, repo, tops, ctx.nestedGit === void 0 ? {} : { run: ctx.nestedGit }) : { kind: "unknown" };
     if (nested.kind === "timeout") return { repos, hidden, problem: `the nested-repo check timed out for the reviewed repo \`${top2}\`; ${RETRY_ALONE}`, timedOut: true };
@@ -10746,7 +11650,7 @@ function gitFoldersOf(top) {
   if (repo.kind !== "repo") return [];
   return [repo.gitDir, repo.commonDir].flatMap((dir) => {
     try {
-      return [import_node_fs18.default.realpathSync(dir)];
+      return [import_node_fs19.default.realpathSync(dir)];
     } catch {
       return [];
     }
@@ -10772,21 +11676,21 @@ function recordOffloadFolder(ctx, command) {
   const { hook } = ctx;
   const printed = OFFLOAD_PRINTED.exec(hook.stdout ?? "");
   if (printed === null || !command.includes("mktemp -d -t oss-offload.") || !isSafeId(hook.agentId) || !isSafeId(hook.sessionId)) return;
-  const folder = import_node_path29.default.normalize(printed[1] ?? "");
+  const folder = import_node_path31.default.normalize(printed[1] ?? "");
   const temp = tempRoots(ctx);
   if (!temp.some((root) => folder.startsWith(`${root}/`)) || !offloadFolderSafe(folder, temp) || !isOwnStep(ctx, command)) return;
   try {
-    appendPrivateFile(import_node_path29.default.join(sessionFolder(ctx.home, hook.sessionId), `${hook.agentId}.${OFFLOAD_RECORD}`), `${folder}
+    appendPrivateFile(import_node_path31.default.join(sessionFolder(ctx.home, hook.sessionId), `${hook.agentId}.${OFFLOAD_RECORD}`), `${folder}
 `);
   } catch {
   }
 }
 function offloadFoldersOf(ctx) {
   const { sessionId, agentId } = ctx.hook;
-  if (!import_node_path29.default.isAbsolute(ctx.home) || !isSafeId(agentId) || sessionState(ctx.home, sessionId) !== "ok") return [];
+  if (!import_node_path31.default.isAbsolute(ctx.home) || !isSafeId(agentId) || sessionState(ctx.home, sessionId) !== "ok") return [];
   try {
-    const text = readPrivateFile(import_node_path29.default.join(runRoot(ctx.home), sessionId, `${agentId}.${OFFLOAD_RECORD}`));
-    return text === null ? [] : text.split("\n").filter((line) => import_node_path29.default.isAbsolute(line));
+    const text = readPrivateFile(import_node_path31.default.join(runRoot(ctx.home), sessionId, `${agentId}.${OFFLOAD_RECORD}`));
+    return text === null ? [] : text.split("\n").filter((line) => import_node_path31.default.isAbsolute(line));
   } catch {
     return [];
   }
@@ -10809,8 +11713,8 @@ function readRuleFile(absPath) {
   return read.text;
 }
 function userConfigText(home) {
-  if (!import_node_path29.default.isAbsolute(home)) return null;
-  const read = readRegularFile(import_node_path29.default.join(home, ".oss", "config.json"), MAX_RULE_FILE_BYTES);
+  if (!import_node_path31.default.isAbsolute(home)) return null;
+  const read = readRegularFile(import_node_path31.default.join(home, ".oss", "config.json"), MAX_RULE_FILE_BYTES);
   return typeof read === "object" ? read.text : null;
 }
 function logDecision(store, event) {
@@ -10838,17 +11742,17 @@ var MAX_AGENT_FILE_BYTES = 256 * 1024;
 var SETUP_SCRIPTS = ["agent-model-check.js", "agent-offload.js"];
 function isOwnStep(ctx, command) {
   const file = ownAgentFile(ctx.hook.agent);
-  if (file === null || ctx.bundleRoot === void 0 || !import_node_path29.default.isAbsolute(ctx.bundleRoot)) return false;
-  const read = readRegularFile(import_node_path29.default.join(ctx.bundleRoot, "agents", file), MAX_AGENT_FILE_BYTES);
+  if (file === null || ctx.bundleRoot === void 0 || !import_node_path31.default.isAbsolute(ctx.bundleRoot)) return false;
+  const read = readRegularFile(import_node_path31.default.join(ctx.bundleRoot, "agents", file), MAX_AGENT_FILE_BYTES);
   const temp = tempRoots(ctx);
   if (typeof read !== "object" || !isOwnSetupStep(command, read.text, temp, [...reviewedRepos(ctx), ctx.home], (folder) => offloadFolderSafe(folder, temp))) return false;
   try {
-    const own = import_node_fs18.default.realpathSync(ctx.bundleRoot);
-    const roots = [ctx.pluginRoot, import_node_path29.default.join(ctx.home, ".claude", "plugins", "oss")].filter((root) => import_node_path29.default.isAbsolute(root));
+    const own = import_node_fs19.default.realpathSync(ctx.bundleRoot);
+    const roots = [ctx.pluginRoot, import_node_path31.default.join(ctx.home, ".claude", "plugins", "oss")].filter((root) => import_node_path31.default.isAbsolute(root));
     return roots.every(
       (root) => SETUP_SCRIPTS.every((script) => {
-        const at = import_node_path29.default.join(root, "watcher", "dist", "cli", script);
-        return !import_node_fs18.default.existsSync(at) || import_node_fs18.default.realpathSync(at).startsWith(`${own}${import_node_path29.default.sep}`);
+        const at = import_node_path31.default.join(root, "watcher", "dist", "cli", script);
+        return !import_node_fs19.default.existsSync(at) || import_node_fs19.default.realpathSync(at).startsWith(`${own}${import_node_path31.default.sep}`);
       })
     );
   } catch {
@@ -10856,24 +11760,24 @@ function isOwnStep(ctx, command) {
   }
 }
 function trustedPluginRoot(ctx) {
-  if (ctx.bundleRoot === void 0 || !import_node_path29.default.isAbsolute(ctx.bundleRoot)) return null;
-  const installed = import_node_path29.default.join(ctx.home, ".claude", "plugins", "oss");
+  if (ctx.bundleRoot === void 0 || !import_node_path31.default.isAbsolute(ctx.bundleRoot)) return null;
+  const installed = import_node_path31.default.join(ctx.home, ".claude", "plugins", "oss");
   const named2 = ctx.pluginRoot !== "" ? ctx.pluginRoot : installed;
-  if (!import_node_path29.default.isAbsolute(named2) || !import_node_path29.default.isAbsolute(installed)) return null;
+  if (!import_node_path31.default.isAbsolute(named2) || !import_node_path31.default.isAbsolute(installed)) return null;
   try {
-    const own = import_node_fs18.default.realpathSync(ctx.bundleRoot);
-    const installedOk = !import_node_fs18.default.existsSync(installed) || import_node_fs18.default.realpathSync(installed) === own;
-    return import_node_fs18.default.realpathSync(named2) === own && installedOk ? own : null;
+    const own = import_node_fs19.default.realpathSync(ctx.bundleRoot);
+    const installedOk = !import_node_fs19.default.existsSync(installed) || import_node_fs19.default.realpathSync(installed) === own;
+    return import_node_fs19.default.realpathSync(named2) === own && installedOk ? own : null;
   } catch {
     return null;
   }
 }
 function pluginInRepo(ctx) {
   try {
-    const plugin = import_node_fs18.default.realpathSync(ctx.pluginRoot);
+    const plugin = import_node_fs19.default.realpathSync(ctx.pluginRoot);
     return [ctx.root, ...reviewedRepos(ctx)].some((repo) => {
-      const real = import_node_fs18.default.realpathSync(repo);
-      return plugin === real || plugin.startsWith(`${real}${import_node_path29.default.sep}`);
+      const real = import_node_fs19.default.realpathSync(repo);
+      return plugin === real || plugin.startsWith(`${real}${import_node_path31.default.sep}`);
     });
   } catch {
     return true;
@@ -10881,7 +11785,7 @@ function pluginInRepo(ctx) {
 }
 function pluginProtected(ctx) {
   try {
-    const hookFile = import_node_path29.default.join(import_node_fs18.default.realpathSync(ctx.pluginRoot), "hooks", "oss-hook.sh");
+    const hookFile = import_node_path31.default.join(import_node_fs19.default.realpathSync(ctx.pluginRoot), "hooks", "oss-hook.sh");
     return isProtected(hookFile, ctx.settings, placesOf(ctx.root, ctx.home, ctx.paths, ctx.caseInsensitive), ctx.paths);
   } catch (error) {
     if (error instanceof OverBudget) throw error;
@@ -10889,8 +11793,8 @@ function pluginProtected(ctx) {
   }
 }
 function trustedSourcesOf(ctx) {
-  const plugin = import_node_path29.default.isAbsolute(ctx.pluginRoot) && pluginProtected(ctx) && !pluginInRepo(ctx) ? [import_node_path29.default.join(ctx.pluginRoot, "hooks")] : [];
-  return { folders: [...homesOf(ctx.home).map((home) => import_node_path29.default.join(home, ".oss", "hooks")), ...plugin], pluginRootVariable: plugin.length > 0 };
+  const plugin = import_node_path31.default.isAbsolute(ctx.pluginRoot) && pluginProtected(ctx) && !pluginInRepo(ctx) ? [import_node_path31.default.join(ctx.pluginRoot, "hooks")] : [];
+  return { folders: [...homesOf(ctx.home).map((home) => import_node_path31.default.join(home, ".oss", "hooks")), ...plugin], pluginRootVariable: plugin.length > 0 };
 }
 function withCallVariables(ctx, command) {
   if (!command.includes("$") || isGateAgent(ctx.hook.agent, ctx.settings.gateAgents)) return command;
@@ -10918,7 +11822,7 @@ async function checkBash(ctx, command) {
   const sources = trustedSourcesOf(ctx);
   const repos = reviewedRepos(ctx);
   for (const [index, part] of facts.parts.entries()) {
-    const refusal3 = checkUnknownGitOption(part) ?? checkPushSetup(part, facts.parts, index) ?? checkRepoTrust(part, trustOf) ?? checkBranchSwitch(part, facts.parts, index, settings, void 0, ctx.caseInsensitive) ?? await checkBranchRefs(part, settings, ctx.git, ctx.caseInsensitive) ?? await checkProtectedBranch(part, settings, ctx.git, branchCreatedBefore(facts.parts, index), ctx.caseInsensitive) ?? await checkHistoryMove(part, settings, ctx.git, branchCreatedBefore(facts.parts, index), void 0, ctx.caseInsensitive) ?? checkForcePush(part, settings) ?? checkTags(part, settings) ?? checkProductionHost(part, settings) ?? checkOssHookEnv(part, command, home, sources) ?? checkVerdictCaptureCall(part, command) ?? checkProtectedPathBash(part, settings, root, home, paths, ctx.caseInsensitive, places, ctx.tree) ?? (ownStep ? null : checkGateAgentBash(part, hook.agent, settings, { repos, home, exists: import_node_fs18.default.existsSync, temp: tempRoots(ctx), fallback: ctx.containment?.kind === "fallback", darwin: ctx.platform === "darwin", sandboxed: ctx.containment?.kind === "sandbox" }, paths, ctx.caseInsensitive, { earlier: facts.parts.slice(0, index), background: hook.background })) ?? await checkGitClean(part, settings, root, home, paths, ctx.git, ctx.caseInsensitive, places, { earlier: facts.parts, count: index, tree: ctx.tree }) ?? checkProtectedPathMention(part, settings, root, home, paths, ctx.caseInsensitive, places);
+    const refusal3 = checkUnknownGitOption(part) ?? checkAllowProtocolMention(command, facts.parts) ?? checkPushSetup(part, facts.parts, index) ?? checkTransportMention(command, facts.parts) ?? checkLocalRemote(part, facts.parts, index) ?? checkRepoTrust(part, trustOf) ?? checkBranchSwitch(part, facts.parts, index, settings, void 0, ctx.caseInsensitive) ?? await checkBranchRefs(part, settings, ctx.git, ctx.caseInsensitive) ?? await checkProtectedBranch(part, settings, ctx.git, branchCreatedBefore(facts.parts, index), ctx.caseInsensitive) ?? await checkHistoryMove(part, settings, ctx.git, branchCreatedBefore(facts.parts, index), void 0, ctx.caseInsensitive) ?? checkForcePush(part, settings) ?? checkTags(part, settings) ?? checkProductionHost(part, settings) ?? checkOssHookEnv(part, command, home, sources) ?? checkArchLaunchctlMention(part, settings, places, paths, home) ?? checkVerdictCaptureCall(part, command, { home, pluginRoot: ctx.pluginRoot, paths, caseInsensitive: ctx.caseInsensitive }) ?? checkProtectedPathBash(part, settings, root, home, paths, ctx.caseInsensitive, places, ctx.tree) ?? (ownStep ? null : checkGateAgentBash(part, hook.agent, settings, { repos, home, exists: import_node_fs19.default.existsSync, temp: tempRoots(ctx), fallback: ctx.containment?.kind === "fallback", darwin: ctx.platform === "darwin", sandboxed: ctx.containment?.kind === "sandbox" }, paths, ctx.caseInsensitive, { earlier: facts.parts.slice(0, index), background: hook.background })) ?? await checkGitClean(part, settings, root, home, paths, ctx.git, ctx.caseInsensitive, places, { earlier: facts.parts, count: index, tree: ctx.tree }) ?? await checkGitStash(part, settings, root, home, paths, ctx.git, places, { earlier: facts.parts, count: index }) ?? checkProtectedPathMention(part, settings, root, home, paths, ctx.caseInsensitive, places);
     if (refusal3 !== null) return { refusal: refusal3, program: part.program };
   }
   if ("unreadable" in facts && !ownStep) {
@@ -10938,14 +11842,14 @@ function checkEdit(ctx) {
   const guarded = checkProtectedPathEdit(target, settings, root, home, ctx.paths, ctx.caseInsensitive);
   if (guarded !== null) return { refusal: guarded };
   const reviewer = isGateAgent(hook.agent, settings.gateAgents);
-  const reviewed = checkGateAgentEdit(target, hook.agent, settings, { repos: reviewedRepos(ctx), home, exists: import_node_fs18.default.existsSync, temp: tempRoots(ctx), privateDir: reviewer ? ownFolder(ctx) : null, offloadFolders: reviewer ? offloadFoldersOf(ctx) : [] }, ctx.paths, ctx.caseInsensitive);
+  const reviewed = checkGateAgentEdit(target, hook.agent, settings, { repos: reviewedRepos(ctx), home, exists: import_node_fs19.default.existsSync, temp: tempRoots(ctx), privateDir: reviewer ? ownFolder(ctx) : null, offloadFolders: reviewer ? offloadFoldersOf(ctx) : [] }, ctx.paths, ctx.caseInsensitive);
   if (reviewed !== null) return { refusal: reviewed };
   const call = readEditCall(hook.toolName, hook.toolInput, hook.cwd, home, readRegularFileOrNull);
   if (call === null) return null;
   const refusal3 = checkFocusedTests(call, settings, root, home, ctx.caseInsensitive) ?? checkRedCycle(call, settings, root, home, fileWorkflowState(root), ctx.store);
   return refusal3 === null ? null : { refusal: refusal3 };
 }
-function record(ctx, command) {
+function record2(ctx, command) {
   const { hook } = ctx;
   if (hook.hookEventName !== "PostToolUse" && hook.hookEventName !== "PostToolUseFailure") return;
   const workflow = fileWorkflowState(ctx.root).read();
@@ -10995,12 +11899,12 @@ var MOUNT_TABLE_MS = 1200;
 function mountPlaces(ctx, table) {
   const mountedOn = new Set(table.map((entry) => entry.at));
   const top = toplevelOf(ctx.hook.cwd);
-  const candidates = withReal([ctx.root, ...top === null ? [] : [top], ...namedRepos(ctx)].filter((dir) => import_node_path29.default.isAbsolute(dir) && dir !== import_node_path29.default.parse(dir).root));
+  const candidates = withReal([ctx.root, ...top === null ? [] : [top], ...namedRepos(ctx)].filter((dir) => import_node_path31.default.isAbsolute(dir) && dir !== import_node_path31.default.parse(dir).root));
   const roots = candidates.filter((dir) => mountedOn.has(dir) || isToplevel(dir));
   const temp = reviewUserTemp(ctx.platform, ctx.tmpdir, ctx.sandboxDeps?.userTemp);
   const own = temp === null ? [] : [privateFolderPath(temp, ctx.hook.sessionId, ctx.hook.agentId)];
-  const gate = [...import_node_path29.default.isAbsolute(ctx.home) ? [import_node_path29.default.join(ctx.home, ".claude"), import_node_path29.default.join(ctx.home, ".oss")] : [], ctx.pluginRoot, ...ctx.bundleRoot === void 0 ? [] : [ctx.bundleRoot]];
-  const fixed = [...own, ...gate.filter((dir) => import_node_path29.default.isAbsolute(dir) && dir !== import_node_path29.default.parse(dir).root)];
+  const gate = [...import_node_path31.default.isAbsolute(ctx.home) ? [import_node_path31.default.join(ctx.home, ".claude"), import_node_path31.default.join(ctx.home, ".oss")] : [], ctx.pluginRoot, ...ctx.bundleRoot === void 0 ? [] : [ctx.bundleRoot]];
+  const fixed = [...own, ...gate.filter((dir) => import_node_path31.default.isAbsolute(dir) && dir !== import_node_path31.default.parse(dir).root)];
   return { watched: withReal([...roots, ...roots.flatMap(gitFoldersOf), ...fixed]), above: withReal([...candidates, ...fixed]) };
 }
 function readMountTable(mounts, now) {
@@ -11015,7 +11919,7 @@ function readMountTable(mounts, now) {
 function voidRun(ctx) {
   const { sessionId, agentId } = ctx.hook;
   try {
-    if (isSafeId(sessionId) && isSafeId(agentId) && import_node_path29.default.isAbsolute(ctx.home)) mark(ctx.home, sessionId, agentId, "tamper");
+    if (isSafeId(sessionId) && isSafeId(agentId) && import_node_path31.default.isAbsolute(ctx.home)) mark(ctx.home, sessionId, agentId, "tamper");
   } catch {
   }
 }
@@ -11036,7 +11940,7 @@ function mountRefusal(ctx, mode) {
       return refusedFor("the gate couldn't record the mount table in its state under ~/.oss/gate-state, which it needs before a review agent's call so it can tell later whether anything was mounted over the code under review. Try again, or report this to the main agent.");
     }
   }
-  const baseline = !linux ? [] : import_node_path29.default.isAbsolute(ctx.home) ? readMountBaseline(ctx.home, ctx.hook.sessionId, ctx.hook.agentId) : null;
+  const baseline = !linux ? [] : import_node_path31.default.isAbsolute(ctx.home) ? readMountBaseline(ctx.home, ctx.hook.sessionId, ctx.hook.agentId) : null;
   let found2;
   try {
     const places = mountPlaces(ctx, table);
@@ -11080,7 +11984,7 @@ async function decide(req, call) {
   const mounted = reviewer || req.mode === "post" && reviewCall ? mountRefusal(ctx, req.mode) : null;
   if (req.mode === "post") {
     refused3 = mounted;
-    if (command !== null) record(ctx, command);
+    if (command !== null) record2(ctx, command);
     if (reviewCall && command !== null) recordOffloadFolder(ctx, command);
   } else if (mounted !== null) {
     refused3 = mounted;
@@ -11149,7 +12053,7 @@ var UNCHECKED_REVIEW = "Refused by gate-agent-write: the gate could not finish c
 function reviewerOrUnknown(req, hook) {
   if (hook === null || hook.agent === void 0) return false;
   for (const root of [req.env.CLAUDE_PLUGIN_ROOT, req.bundleRoot]) {
-    if (root === void 0 || !import_node_path29.default.isAbsolute(root)) continue;
+    if (root === void 0 || !import_node_path31.default.isAbsolute(root)) continue;
     try {
       return isGateAgent(hook.agent, readGateAgents(root, projectRootOf(req.env.CLAUDE_PROJECT_DIR, hook.cwd)));
     } catch {
@@ -11237,7 +12141,7 @@ async function runToolGate(req, deps = {}) {
 var USAGE = "Usage: tool-gate pre|post < hook.json\n";
 var HARD_LIMIT_MS = 2500;
 function ownPluginRoot() {
-  return typeof __dirname === "string" ? import_node_path30.default.resolve(__dirname, "..", "..", "..") : "";
+  return typeof __dirname === "string" ? import_node_path32.default.resolve(__dirname, "..", "..", "..") : "";
 }
 function modeOf(argv) {
   const mode = argv[0];
@@ -11371,7 +12275,7 @@ if (isWorkerRequest(request)) {
     () => import_node_worker_threads.parentPort?.postMessage(null)
   );
 } else if (import_node_worker_threads.isMainThread && /tool-gate\.(js|cjs)$/.test(process.argv[1] || "")) {
-  runMain(import_node_path30.default.resolve(process.argv[1]), process.argv.slice(2));
+  runMain(import_node_path32.default.resolve(process.argv[1]), process.argv.slice(2));
 }
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {

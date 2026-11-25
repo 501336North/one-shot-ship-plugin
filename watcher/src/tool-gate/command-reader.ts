@@ -120,6 +120,8 @@ export interface CommandPart {
    * is risky next to an unreadable piece, as an interpreter is.
    */
   hiddenScript?: string;
+  /** The `arch` or `launchctl` program word whose start-word reading this part is (ship fix round 9, R9-1). */
+  runBy?: string;
 }
 
 export interface CommandFacts {
@@ -174,6 +176,8 @@ interface Reading {
    * unknown part, a variable's included, is an unknown write; else only one a `$(…)` builds (D-R12-1).
    */
   follow: boolean;
+  /** The commands read so far at the start words of an `arch` or `launchctl` part, against MAX_START_READINGS (ship fix round 9, R9-1). */
+  startReadings: number;
 }
 
 /**
@@ -313,6 +317,9 @@ const WRAPPERS = new Map<string, WrapperSpec>([
   }],
 ]);
 
+/** Each wrapper's option values, operands and assignments, for a rule that finds the program word itself (gate-gaps-r3 Task 2). */
+export const WRAPPER_WORDS: ReadonlyMap<string, { readonly values: readonly string[]; readonly operands?: number; readonly assignments?: boolean }> = WRAPPERS;
+
 const SHELLS = new Set(['bash', 'sh', 'zsh', 'dash', 'ksh']);
 /** Shell options that take the next word as their value; in a cluster (`-eo`), each such letter takes one. */
 const SHELL_VALUE_OPTIONS = new Set(['-o', '-O', '--rcfile', '--init-file']);
@@ -330,6 +337,8 @@ const MAX_NESTED_DEPTH = 5;
  */
 const MAX_GROUP_DEPTH = 64;
 const MAX_WRAPPERS = 64;
+/** Most commands one call may read at the start words of `arch` / `launchctl` parts (R9-1): past it the call is too complex. */
+const MAX_START_READINGS = 64;
 const PIPES = ['|', '|&'];
 /** Reserved words that start or end a compound command; skipped where a command starts. */
 const KEYWORDS = new Set(['if', 'then', 'elif', 'else', 'fi', 'do', 'done', 'while', 'until', '!']);
@@ -433,7 +442,7 @@ export function readCommand(
 ): ReadResult {
   const reading: Reading = {
     home: setsHome(cmd) ? HOME_UNKNOWN : home, budget: new ReadBudget(), unreadable: null, caseInsensitive, toplevel: toplevel ?? null, readFile: readFile ?? null, written: new Set(),
-    files: new Map(), scriptCommands: new Map(), scanned: 0,
+    files: new Map(), scriptCommands: new Map(), scanned: 0, startReadings: 0,
     cdpath: cdpath === undefined ? null : compactCdpath(cdpath.split(':')),
     cdpathSetUnseen: cdpathSetUnseen(cmd),
     tmpdirSet: /(^|[^$\w{])TMPDIR\b/.test(cmd),
@@ -1288,7 +1297,7 @@ const VARIABLE_REFERENCE = /\{([A-Za-z_][A-Za-z0-9_]*)\}(?![[:{])|([A-Za-z_][A-Z
  * word holds any other expansion (`$(…)`, `$1`, `${X:-…}`, a backtick), a subscript or modifier, or reads
  * HOME in a call that sets it (round 15, SEC MEDIUM-A).
  */
-function variableReferences(raw: string, home: string, specials = false): { name: string; quoted: boolean }[] | null {
+export function variableReferences(raw: string, home: string, specials = false): { name: string; quoted: boolean }[] | null {
   const refs: { name: string; quoted: boolean }[] = [];
   let quote: "'" | '"' | null = null;
   for (let i = 0; i < raw.length; i++) {
@@ -2643,6 +2652,7 @@ function ownParts(segment: Segment, segments: Segment[], reading: Reading, depth
     ...settingParts(part, reading, depth),
     ...scriptCommandParts(scriptFacts, part, reading, depth),
     ...alternateParts(alternates, segment, segments, part, reading, depth),
+    ...startParts(startReadings(words, reading), segment, segments, part, reading, depth),
   ];
   for (const target of part.writeTargets) reading.written.add(path.resolve(target));
   const script = scriptOf(name, program === null ? null : path.posix.basename(program), args) ?? stdinShellScript(name, args, part.stdinScripts) ?? expectSpawns(name, args, cwd, reading, stdinFed(segment));
@@ -2760,6 +2770,119 @@ function alternateParts(alternates: string[][], segment: Segment, segments: Segm
       terminal: true,
     })),
   );
+}
+
+/** A segment's marks (substitutions, unknown parts) for its words from `offset` on. */
+function shiftedMarks(marked: Marked, offset: number): Marked {
+  return { words: new Set([...marked.words].flatMap((n) => (n >= offset ? [n - offset] : []))), redirects: marked.redirects };
+}
+
+/**
+ * The parts of the commands an `arch` or `launchctl` part may run (R9-1), read as the segment's own
+ * command from that word on: its redirects, stdin and the marks of its substituted or unknown words kept.
+ */
+function startParts(starts: StartReading[], segment: Segment, segments: Segment[], part: CommandPart, reading: Reading, depth: number): CommandPart[] {
+  if (starts.length === 0) return [];
+  if (depth >= MAX_NESTED_DEPTH) throw new ReadingLimit(`scripts nested deeper than ${MAX_NESTED_DEPTH}`);
+  return starts.flatMap((start) => {
+    // R9-3: leading `NAME=VALUE` words set the environment of the command read, as arch's `-e` values do
+    const leading = start.words.findIndex((w) => !ASSIGNMENT.test(w));
+    if (leading === -1) return [];
+    const words = start.words.slice(leading);
+    const settings = [...start.settings, ...start.words.slice(0, leading)];
+    const offset = segment.words.length - words.length;
+    const suffix = offset >= 0 && words.every((w, n) => segment.words[offset + n] === w);
+    const marks = suffix
+      ? { substituted: shiftedMarks(segment.substituted, offset), unknown: shiftedMarks(segment.unknown, offset), wordTokens: segment.wordTokens.slice(offset) }
+      : { wordTokens: [] };
+    return ownParts({ ...segment, ...marks, words, assignments: assignedNames(settings), assignmentValues: assignedValues(settings), scripts: [] }, segments, reading, depth + 1).map((p) => ({
+      ...p,
+      assignments: [...part.assignments, ...p.assignments],
+      runBy: part.program ?? undefined,
+    }));
+  });
+}
+
+/** True when a program word runs `arch` or `launchctl`: its base name, or a glob that may match one. */
+function runsArchOrLaunchctl(word: string): boolean {
+  const base = path.posix.basename(word).toLowerCase();
+  if (base === 'arch' || base === 'launchctl') return true;
+  if (!/[?*[]/.test(base)) return false;
+  // any glob class (`[…]` with something inside) may match, whatever it says (R11-1); a lone `[` is the test builtin
+  if (base.includes('[') && base.lastIndexOf(']') > base.indexOf('[') + 1) return true;
+  return globMayMatch(base, 'arch') || globMayMatch(base, 'launchctl');
+}
+
+/**
+ * True when a glob may match `name` (`?`, `*`, `[…]`, `[!…]`; a `[` with no `]` is itself), read in one
+ * pass over the glob for each place in the name, so no glob makes it slow (ship fix round 10, R10-1 (d)).
+ */
+function globMayMatch(glob: string, name: string): boolean {
+  // at[k]: the glob read so far may match the first k letters of the name
+  let at = name.split('').map(() => false).concat(false);
+  at[0] = true;
+  for (let i = 0; i < glob.length; i++) {
+    const c = glob[i];
+    const next = at.map(() => false);
+    if (c === '*') {
+      let seen = false;
+      for (let k = 0; k <= name.length; k++) next[k] = seen ||= at[k];
+    } else {
+      let test = (letter: string): boolean => letter === c;
+      if (c === '?') test = () => true;
+      else if (c === '[') {
+        const close = glob.indexOf(']', i + 2);
+        if (close !== -1) {
+          const inner = glob.slice(i + 1, close);
+          const negate = inner.startsWith('!') || inner.startsWith('^');
+          const set = negate ? inner.slice(1) : inner;
+          test = (letter) => inClass(set, letter) !== negate;
+          i = close;
+        }
+      }
+      for (let k = 0; k < name.length; k++) if (at[k] && test(name[k])) next[k + 1] = true;
+    }
+    at = next;
+  }
+  return at[name.length];
+}
+
+/** True when a letter is in a glob class's set (`a-z` ranges read). */
+function inClass(set: string, letter: string): boolean {
+  for (let i = 0; i < set.length; i++) {
+    if (set[i + 1] === '-' && i + 2 < set.length) {
+      if (letter >= set[i] && letter <= set[i + 2]) return true;
+      i += 2;
+    } else if (set[i] === letter) return true;
+  }
+  return false;
+}
+
+/** A command an `arch` or `launchctl` part may run: its words, and the `NAME=VALUE` settings it runs with (R9-3). */
+interface StartReading {
+  words: string[];
+  settings: string[];
+}
+
+/**
+ * The commands an `arch` or `launchctl` part may run, read from each word they could start at (ship fix
+ * round 9, R9-1 "read every way"): every word after the program that is not an option, and the word after
+ * a `--`. Each is read as a command of its own, so every rule sees it. Past MAX_START_READINGS a call
+ * is too complex to check (`arch arch arch …`).
+ */
+function startReadings(words: string[], reading: Reading): StartReading[] {
+  if (words.length === 0 || !runsArchOrLaunchctl(words[0])) return [];
+  const starts: StartReading[] = [];
+  // R9-3: arch's `-e NAME=VALUE` / `-eNAME=VALUE` values before a start set the environment of the command read there
+  const settings: string[] = [];
+  for (let i = 1; i < words.length; i++) {
+    if (!words[i].startsWith('-') || words[i - 1] === '--') starts.push({ words: words.slice(i), settings: [...settings] });
+    const value = words[i] === '-e' ? words[i + 1] : words[i].startsWith('-e') ? words[i].slice(2) : undefined;
+    if (value !== undefined && ASSIGNMENT.test(value)) settings.push(value);
+  }
+  reading.startReadings += starts.length;
+  if (reading.startReadings > MAX_START_READINGS) throw new ReadingLimit(`more than ${MAX_START_READINGS} commands read after arch or launchctl`);
+  return starts;
 }
 
 /**

@@ -61,12 +61,39 @@ function oldFolderHeads(globs: readonly string[]): string[] {
   });
 }
 
+/** The reference's per-list work, built once per settings list and place rather than once per path. */
+const oldHeadsCache = new WeakMap<readonly string[], string[]>();
+const oldFixedCache = new WeakMap<readonly string[], WeakMap<Places, string[]>>();
+
+function cachedFolderHeads(globs: readonly string[]): string[] {
+  let heads = oldHeadsCache.get(globs);
+  if (heads === undefined) {
+    heads = oldFolderHeads(globs);
+    oldHeadsCache.set(globs, heads);
+  }
+  return heads;
+}
+
+function cachedFixedFolders(globs: readonly string[], at: Places): string[] {
+  let byPlace = oldFixedCache.get(globs);
+  if (byPlace === undefined) {
+    byPlace = new WeakMap();
+    oldFixedCache.set(globs, byPlace);
+  }
+  let folders = byPlace.get(at);
+  if (folders === undefined) {
+    folders = globs.map((g) => oldFixedFolder(g, at));
+    byPlace.set(at, folders);
+  }
+  return folders;
+}
+
 function oldHoldsProtected(absPath: string, settings: GateSettings, places: Places[], paths: PathResolver): boolean {
   return oldFormsOf(absPath, paths).some((p) =>
     places.some(
       (at) =>
-        settings.protectedPaths.map((g) => oldFixedFolder(g, at)).some((f) => oldIsSameOrAncestor(p, f, at.caseInsensitive === true)) ||
-        oldMatchAnyPath(oldFolderHeads(settings.protectedPaths), p, at),
+        cachedFixedFolders(settings.protectedPaths, at).some((f) => oldIsSameOrAncestor(p, f, at.caseInsensitive === true)) ||
+        oldMatchAnyPath(cachedFolderHeads(settings.protectedPaths), p, at),
     ),
   );
 }
@@ -136,7 +163,8 @@ describe('the faster protected-path checks decide as the round-9 checks did', ()
           if (matchAnyPath(protectedPaths, p, places[0]) !== oldMatchAnyPath(protectedPaths, p, places[0])) differences.push(`matchAnyPath ${p}`);
         }
         expect(differences.slice(0, 10)).toEqual([]);
-      });
+        // ~2.5 s idle and 6-7 s under heavy load, past vitest's 5 s default; the check is what matters, not the time.
+      }, 30_000);
     }
   }
 });

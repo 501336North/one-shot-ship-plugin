@@ -173,15 +173,16 @@ describe('D47: the wildcard matcher is linear', () => {
   it.each([
     ['many stars before the name', `bash ~/.oss/hooks/${'*'.repeat(200)}oss-verdict-capture.sh`, true],
     ['a range set', 'bash ~/.oss/hooks/oss-verdict-captur[a-z].sh', true],
-    ['a negated set that excludes the letter', 'bash ~/.oss/hooks/oss-verdict-captur[!e].sh', false],
-    ['a caret-negated set that excludes the letter', 'bash ~/.oss/hooks/oss-verdict-captur[^e].sh', false],
+    // Ship fix round 14, R14-1 (owner pick "Round 14: blunt any-set"): any set is any one character.
+    ['a negated set that excludes the letter', 'bash ~/.oss/hooks/oss-verdict-captur[!e].sh', true],
+    ['a caret-negated set that excludes the letter', 'bash ~/.oss/hooks/oss-verdict-captur[^e].sh', true],
     ['a negated set that allows the letter', 'bash ~/.oss/hooks/oss-verdict-captur[!x].sh', true],
-    ['a set without the letter', 'bash ~/.oss/hooks/oss-verdict-captur[xyz].sh', false],
+    ['a set without the letter', 'bash ~/.oss/hooks/oss-verdict-captur[xyz].sh', true],
     ['a ? for one character', 'bash ~/.oss/hooks/oss-verdict-captur?.sh', true],
     // Code-review L1 and perf I3 (round 7, D51).
     ['a set with ] first that holds the letter', 'bash ~/.oss/hooks/oss-verdict-captur[]e].sh', true],
-    ['a set with ] first, without the letter', 'bash ~/.oss/hooks/oss-verdict-captur[]x].sh', false],
-    ['a negated set with ] first that excludes the letter', 'bash ~/.oss/hooks/oss-verdict-captur[!]e].sh', false],
+    ['a set with ] first, without the letter', 'bash ~/.oss/hooks/oss-verdict-captur[]x].sh', true],
+    ['a negated set with ] first that excludes the letter', 'bash ~/.oss/hooks/oss-verdict-captur[!]e].sh', true],
     ['a POSIX class, as any one character', 'bash ~/.oss/hooks/oss-verdict-captur[[:digit:]].sh', true],
     ['a set in the extension outside a hooks or cli folder', 'node ./verdict-capture.c[j]s', true],
     ['a bare extension glob outside a hooks or cli folder', 'node ./*.js', false],

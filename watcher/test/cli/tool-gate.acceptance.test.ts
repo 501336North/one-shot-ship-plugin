@@ -1882,6 +1882,8 @@ describe('tool-gate acceptance: command reading the agent could slip past (fix r
       'git branch -d master',
       'git symbolic-ref HEAD refs/heads/main',
       'git symbolic-ref refs/heads/feat/x refs/heads/main',
+      // gate-gaps-r3 Task 4: every update-ref is refused, whatever the ref
+      'git update-ref refs/heads/feat/y HEAD',
     ])('refuses %s', async (command) => {
       refused(await run(featureRepo(), command));
     });
@@ -1891,7 +1893,6 @@ describe('tool-gate acceptance: command reading the agent could slip past (fix r
       'git branch -d feat-old',
       'git branch --contains main',
       'git branch',
-      'git update-ref refs/heads/feat/y HEAD',
       'git symbolic-ref HEAD',
     ])('still allows %s', async (command) => {
       allowed(await run(featureRepo(), command));
@@ -2929,11 +2930,11 @@ describe('tool-gate acceptance: fix round 4, K8', () => {
       refused(await run(repo, 'git commit -m x'));
     });
 
-    it.each(['git branch -f MAIN feat/x', 'git update-ref refs/heads/MAIN HEAD'])('still allows %s where letter case matters', async (command) => {
+    it.each(['git branch -f MAIN feat/x'])('still allows %s where letter case matters', async (command) => {
       allowed(await run(featureRepo(), command, { platform: 'linux' }));
     });
 
-    it.each(['git branch -f mainline feat/x', 'git update-ref refs/heads/feat/y HEAD'])('still allows %s', async (command) => {
+    it.each(['git branch -f mainline feat/x'])('still allows %s', async (command) => {
       allowed(await run(featureRepo(), command));
     });
   });
@@ -2958,6 +2959,8 @@ describe('tool-gate acceptance: fix round 4, K8', () => {
       'git reflog delete main@{1}',
       'git reflog expire --expire=now refs/heads/main',
       'git reflog expire --all',
+      // gate-gaps-r3 Task 4: every reflog expire or delete is refused
+      'git reflog expire --expire=now refs/heads/feat/x',
     ])('refuses %s from a feature branch', async (command) => {
       refused(await run(featureRepo(), command));
     });
@@ -2981,10 +2984,12 @@ describe('tool-gate acceptance: fix round 4, K8', () => {
       'git checkout -B feat/y',
       'git switch -C feat/y',
       'git filter-branch -- feat/x',
-      'git reflog expire --expire=now refs/heads/feat/x',
       'git fast-import',
     ])('still allows %s from a feature branch', async (command) => {
-      allowed(await run(featureRepo(), command));
+      // gate-gaps-r3 ship round 1, S3a: the default mapping is allowed only for a remote in the repo's git config
+      const repo = featureRepo();
+      git(repo, ['remote', 'add', 'origin', 'https://github.com/example/x.git']);
+      allowed(await run(repo, command));
     });
   });
 
@@ -3894,7 +3899,7 @@ describe('tool-gate acceptance: fix part K12', () => {
     it.each([
       'git config --type bool core.x true',
       'git config -t bool core.x true',
-      'git config --ty bool core.bare false',
+      'git config --ty bool core.filemode false',
       'git config --get core.hooksPath',
       'git config user.name x',
       'git config --global user.email dev@example.com',

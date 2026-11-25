@@ -63,7 +63,7 @@ export function unfirm(p: string): string {
 }
 
 /** The path as written (`..` collapsed as text) and as it really is on disk (from the raw path, `..` kept), firmlink taken off. */
-function formsOf(absPath: string, paths: PathResolver): string[] {
+export function formsOf(absPath: string, paths: PathResolver): string[] {
   return [...new Set([path.normalize(absPath), paths.realpath(absPath)].map(unfirm))];
 }
 

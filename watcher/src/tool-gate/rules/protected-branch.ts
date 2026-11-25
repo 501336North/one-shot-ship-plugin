@@ -17,6 +17,8 @@ import { UNKNOWN } from '../tokenize.js';
 import { OverBudget } from '../budget.js';
 import { isTooLong } from './protected-path.js';
 import { longOption } from '../sed-awk.js';
+import { findRepo } from '../repo-finder.js';
+import { readRegularFile } from '../regular-file.js';
 
 /** Ways git spells a branch ref in a refspec (git syntax, not a rule value): `refs/heads/main`, `heads/main`. */
 const BRANCH_REF_PREFIXES = ['refs/heads/', 'heads/'];
@@ -203,7 +205,7 @@ export function checkBranchSwitch(
 const SYMBOLIC_REF_VALUES = new Set(['-m']);
 
 /** The words of a git subcommand that are not options or option values. */
-function positionalsOf(args: readonly string[], values: ReadonlySet<string>): string[] {
+export function positionalsOf(args: readonly string[], values: ReadonlySet<string>): string[] {
   const words: string[] = [];
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -222,8 +224,6 @@ function symbolicTarget(args: readonly string[], branches: Branches): string | n
   return deletes && name !== undefined && namesProtected(name, branches) ? name : null;
 }
 
-/** `git update-ref` options that take a value (git syntax). */
-const UPDATE_REF_VALUES = new Set(['-m']);
 /** `git branch` modes that move, copy, delete or force a branch (git syntax): short letters and long options. */
 const BRANCH_MODE_LETTERS = /^-[A-Za-z]*[dDmMcCf]/;
 const BRANCH_MODE_LONG = new Set(['--delete', '--move', '--copy', '--force']);
@@ -239,11 +239,11 @@ function refChange(command: string, branch: string): Refusal {
 
 /**
  * Refuses a git call that moves, renames, copies onto, deletes or points a ref at a protected
- * branch without a commit or push: `git update-ref refs/heads/main …`, `git branch -f|-m|-M|-c|-C|-d|-D`
- * naming one, `git symbolic-ref HEAD refs/heads/main`, and (from any branch, fix part K11) `git rebase
- * <upstream> <protected>` and `git worktree add -b|-B <protected>`. `git update-ref HEAD …` moves the current
- * branch, so it is checked like a commit. `git update-ref --stdin` takes its refs from stdin, which
- * the gate can't read.
+ * branch without a commit or push: `git branch -f|-m|-M|-c|-C|-d|-D` naming one, `git symbolic-ref
+ * HEAD refs/heads/main`, and (from any branch, fix part K11) `git rebase <upstream> <protected>` and
+ * `git worktree add -b|-B <protected>`. Every `git update-ref` (any ref, `-d` and `--stdin` included)
+ * and every `git reflog expire|delete|drop|write` is refused, whatever it names (gate-gaps-r3 Task 4): they
+ * write or drop ref history the other rules and the ship-start snapshot rely on.
  */
 export async function checkBranchRefs(
   part: CommandPart,
@@ -256,19 +256,18 @@ export async function checkBranchRefs(
   const branches = branchesOf(settings, caseInsensitive);
   const { subcommand, args } = facts;
   if (subcommand === 'update-ref') {
-    if (args.includes('--stdin')) {
-      return { rule: 'protected-branch', reason: 'Refused: `git update-ref --stdin` reads the refs it changes from stdin, which the gate can\'t check. Change one ref per call instead.' };
-    }
-    const [ref] = positionalsOf(args, UPDATE_REF_VALUES);
-    if (ref === undefined) return null;
-    if (ref === 'HEAD') {
-      if (args.includes('--no-deref')) return null;
-      const current = await git.currentBranch(facts.dir);
-      return current !== null && isProtected(current, branches) ? refChange('git update-ref HEAD', current) : null;
-    }
-    return namesProtected(ref, branches) ? refChange(`git update-ref ${ref}`, ref) : null;
+    return { rule: 'protected-branch', reason: 'Refused: `git update-ref` writes a ref directly, without the history git keeps for it. Ask the user to run it with `!`.' };
+  }
+  if (subcommand === 'replace' && !replaceLists(args)) {
+    return { rule: 'protected-branch', reason: 'Refused: `git replace` changes which commits git shows, without a ref change. Ask the user to run it with `!`.' };
+  }
+  if (subcommand === 'reflog' && REFLOG_CHANGES.has(args[0])) {
+    return { rule: 'protected-branch', reason: `Refused: \`git reflog ${args[0]}\` changes or erases the ref history a lost commit is found by. Ask the user to run it with \`!\`.` };
   }
   if (subcommand === 'symbolic-ref') {
+    const [name, pointed] = positionalsOf(args, SYMBOLIC_REF_VALUES);
+    const writes = pointed !== undefined || args.some((a) => a === '-d' || a === '--delete');
+    if (writes && name !== undefined && remoteTracking(name, false)) return REMOTE_TRACKING_REFUSAL;
     const target = symbolicTarget(args, branches);
     return target === null ? null : refChange(`git symbolic-ref … ${target}`, target);
   }
@@ -284,6 +283,13 @@ export async function checkBranchRefs(
     const created = worktreeBranch(args, branches);
     return created === undefined ? null : refChange(`git worktree ${args.join(' ')}`, created);
   }
+  // ship round 1, S3b: `git remote set-head <remote> <branch>` writes refs/remotes/<remote>/HEAD; `-a` / `-d` let git decide
+  if (subcommand === 'remote') {
+    const at = args.findIndex((a) => !a.startsWith('-'));
+    if (args[at] === 'set-head' && !args.slice(at + 1).some((a) => SET_HEAD_GIT_DECIDES.has(a))) return REMOTE_TRACKING_REFUSAL;
+  }
+  const forged = remoteRefForge(facts);
+  if (forged !== null) return forged;
   if (subcommand === 'fetch') {
     const target = positionalsOf(args, FETCH_VALUES).slice(1).filter((spec) => spec.includes(':')).map((spec) => protectedTarget(spec, branches)).find((dst) => dst !== undefined);
     return target === undefined ? null : refChange(`git fetch ${args.join(' ')}`, target);
@@ -293,6 +299,18 @@ export async function checkBranchRefs(
   if (mode === undefined) return null;
   const named = positionalsOf(args, BRANCH_VALUES).find((w) => namesProtected(w, branches));
   return named === undefined ? null : refChange(`git branch ${mode} … ${named}`, named);
+}
+
+/**
+ * True when a `git replace` only lists replacements (git syntax): no arguments, or only `-l` / `--list`
+ * and `--format=…`, with at most one pattern after `-l` / `--list` (gate-gaps-r3 Task 11). Anything
+ * else, an abbreviated long option included, is read as a write.
+ */
+function replaceLists(args: readonly string[]): boolean {
+  const listing = args.includes('-l') || args.includes('--list');
+  const options = args.filter((a) => a.startsWith('-'));
+  const patterns = args.length - options.length;
+  return options.every((a) => a === '-l' || a === '--list' || a.startsWith('--format=')) && (patterns === 0 || (listing && patterns === 1));
 }
 
 /**
@@ -400,6 +418,275 @@ const FETCH_VALUES = new Set([
   '--depth', '--deepen', '--shallow-since', '--shallow-exclude', '-j', '--jobs', '--upload-pack', '-o', '--server-option',
   '--negotiation-tip', '--refmap', '--filter',
 ]);
+
+/** git fetch's `--refmap` (git syntax; `--refm` is its shortest unambiguous prefix): its refspec maps fetched refs like a destination. */
+const FETCH_REFMAP: OptionSpec = { valueLetters: new Set(), valueLongs: [{ full: '--refmap', shortest: 6 }] };
+/** A remote-tracking ref as a ref name or refspec destination (git syntax): `refs/remotes/…`, or `remotes/…`, which fetch puts under `refs/`. */
+const REMOTE_TRACKING = /^(?:refs\/)?remotes\//;
+/** A replace ref a wildcard destination is tested against. */
+const SAMPLE_REPLACE_REF = 'refs/replace/0123456789012345678901234567890123456789';
+
+/** True when a refspec destination is under refs/replace/ (ship round 1, S3d), in any letter case, or a wildcard that can name one. */
+export function replaceRef(ref: string): boolean {
+  const lower = ref.split(UNKNOWN)[0].toLowerCase();
+  return lower.startsWith('refs/replace/') || (lower.includes(REFSPEC_WILDCARD) && matchCommand(lower, [SAMPLE_REPLACE_REF]));
+}
+
+/** A remote-tracking ref a wildcard destination is tested against. */
+const SAMPLE_REMOTE_TRACKING_REF = 'refs/remotes/r/b';
+
+/**
+ * True when a ref name or refspec destination is a remote-tracking ref, in any letter case (on macOS
+ * `REFS/REMOTES/x` is the same file), judged by the part written before anything only known when it
+ * runs (`HEAD:$(…)` names a branch, as the protected-branch check reads it). With `wildcards`, a
+ * wildcard that can name one counts too (`refs/*`); a push's wildcards are the protected-branch check's.
+ */
+export function remoteTracking(ref: string, wildcards: boolean): boolean {
+  const lower = ref.split(UNKNOWN)[0].toLowerCase();
+  return REMOTE_TRACKING.test(lower) || (wildcards && lower.includes(REFSPEC_WILDCARD) && matchCommand(lower, [SAMPLE_REMOTE_TRACKING_REF]));
+}
+
+/** git's `file://` URL prefix (git syntax): the rest is a path on this machine. */
+const FILE_URL = /^file:\/\//i;
+/** A URL scheme (git syntax): `https://`, `ssh://` … */
+const URL_SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//;
+
+/**
+ * True when a remote URL is a path on this machine (git's connect.c rule) or a `file://` URL: no
+ * `scheme://` and no scp-like `host:path` (a `:` with no `/` before it), so `.`, `..`, `~/x`, `/x`,
+ * `x/y` and a bare `x` all count. A URL whose scheme or host is only known when it runs counts too;
+ * one with a written scheme or host and later parts only known when it runs does not. A URL whose host is this
+ * machine (localhost, 127.x, ::1; ship round 1, S3c) counts too, with any scheme or in scp-like form.
+ */
+export function isLocalUrl(url: string): boolean {
+  if (FILE_URL.test(url)) return true;
+  if (oddHost(url)) return true;
+  if (loopbackHost(urlHost(url))) return true;
+  if (URL_SCHEME.test(url)) return false;
+  const colon = url.indexOf(':');
+  const unknown = url.indexOf(UNKNOWN);
+  if (unknown !== -1 && (colon === -1 || unknown < colon)) return true;
+  return colon === -1 || url.slice(0, colon).includes('/');
+}
+
+/**
+ * True when an ssh, git+ssh, ssh+git or git:// URL (any case) or an scp-style address has a host part, up to the
+ * first `/` (scp: the first `:`), holding `[`, `%` or more than one `@` (ship fix round 7, R7-1, "Blunt: refuse
+ * odd hosts"): the gate does not try to read such a host the way git does.
+ */
+function oddHost(url: string): boolean {
+  const scheme = /^(?:ssh|git\+ssh|ssh\+git|git):\/\//i.exec(url);
+  let host: string;
+  if (scheme !== null) {
+    const rest = url.slice(scheme[0].length);
+    host = rest.slice(0, rest.search(/\/|$/));
+  } else {
+    const colon = url.indexOf(':');
+    if (URL_SCHEME.test(url) || colon === -1 || url.slice(0, colon).includes('/')) return false;
+    host = url.slice(0, colon);
+  }
+  return /[[%]/.test(host) || host.split('@').length > 2;
+}
+
+/** The host of a `scheme://[user@]host…` URL or an scp-like `[user@]host:path` (git syntax), `[…]` for IPv6. */
+/**
+ * The host of a URL or scp-like address, read the way git and curl read it (ship fix round 3, R3-3): the
+ * authority ends at the first `/`, `?` or `#` (scp: at the first `:` outside brackets); userinfo runs to the
+ * last `@` in it; a bracketed part may hold ssh userinfo (`[git@127.0.0.1]:22`, `[git@::1]:x`). Round 4, R4-2
+ * ("Split by scheme"): git hands an ssh URL's authority to ssh up to the first `/` only, so for ssh, git+ssh and
+ * ssh+git a `?` or `#` is part of the user. Round 5, R5-2: the authority is percent-decoded first.
+ */
+function percentDecoded(text: string): string {
+  try {
+    return decodeURIComponent(text);
+  } catch {
+    // a broken escape: decode the escapes that are whole
+    return text.replace(/%[0-9A-Fa-f]{2}/g, (e) => String.fromCharCode(parseInt(e.slice(1), 16)));
+  }
+}
+
+function urlHost(url: string): string {
+  const scheme = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//.exec(url);
+  const ssh = scheme !== null && /^(?:ssh|git\+ssh|ssh\+git):\/\/$/i.test(scheme[0]);
+  // round 6, R6-2 (D): for ssh and git://, git decodes the text after `://` before it finds the host's end (connect.c)
+  const decodedFirst = ssh || (scheme !== null && /^git:\/\/$/i.test(scheme[0]));
+  const rest = scheme === null ? url : decodedFirst ? percentDecoded(url.slice(scheme[0].length)) : url.slice(scheme[0].length);
+  const end = ssh ? /\/|$/ : /[/?#]|$/;
+  const written = scheme === null ? (/^(?:[^@/:[\]]*@)?\[[^\]]*\]|^[^:/]*/.exec(rest)?.[0] ?? '') : rest.slice(0, rest.search(end));
+  // round 5, R5-2: the authority is percent-decoded before the host is read (`github.com%40127.0.0.1`, `%5b::1%5d`)
+  const authority = decodedFirst ? written : percentDecoded(written);
+  // R6-2 (B): a bracketed userinfo is read as the host only for ssh and scp-style addresses; http(s) and git:// take
+  // the host after the last `@`
+  const bracketFirst = scheme === null || ssh;
+  if (bracketFirst && authority.startsWith('[') && authority.includes(']')) return authority.slice(1, authority.indexOf(']')).replace(/^.*@/, '');
+  const host = authority.replace(/^.*@/, '');
+  return host.startsWith('[') ? host.slice(1, host.includes(']') ? host.indexOf(']') : undefined) : host.replace(/:.*$/, '');
+}
+/**
+ * True when a URL host is this machine, read the way the OS reads it (ship round 2, R2-1): `localhost` or
+ * `*.localhost` (any case, trailing dots, `%xx` escapes decoded); an IPv4 number in inet_aton's forms (1 to 4
+ * parts, each decimal, `0` octal or `0x` hex) in 127.0.0.0/8 or 0.0.0.0; an IPv6 address that is `::1`, `::`,
+ * or one of those IPv4 addresses mapped (`::ffff:…`) or compatible (`::…`).
+ */
+function loopbackHost(raw: string): boolean {
+  let host = raw;
+  try {
+    host = decodeURIComponent(raw);
+  } catch {
+    // a broken escape: read the host as written
+  }
+  host = host.toLowerCase().replace(/\.+$/, '');
+  if (host === 'localhost' || host.endsWith('.localhost')) return true;
+  if (host.includes(':')) return loopbackIpv6(host);
+  const v4 = ipv4Number(host);
+  return v4 !== null && localIpv4(v4);
+}
+
+/** True for 127.0.0.0/8 and 0.0.0.0. */
+function localIpv4(value: number): boolean {
+  return value >>> 24 === 127 || value === 0;
+}
+
+/** The 32-bit number of an IPv4 host in inet_aton's forms (`127.1`, `2130706433`, `0x7f.1`, `0177.0.0.1`), or null. */
+function ipv4Number(host: string): number | null {
+  const parts = host.split('.');
+  if (parts.length > 4) return null;
+  const values: number[] = [];
+  for (const part of parts) {
+    const value = /^0x[0-9a-f]*$/.test(part) ? parseInt(part.slice(2) || '0', 16) : /^0[0-7]*$/.test(part) ? parseInt(part, 8) : /^[1-9][0-9]*$/.test(part) ? Number(part) : NaN;
+    if (!Number.isFinite(value)) return null;
+    values.push(value);
+  }
+  const last = values.pop() as number;
+  if (values.some((v) => v > 255) || last >= 2 ** (8 * (4 - values.length))) return null;
+  return values.reduce((sum, v, i) => sum + v * 2 ** (8 * (3 - i)), 0) + last;
+}
+
+/** True when an IPv6 host (`::1`, `0::1`, `::`, `::ffff:127.0.0.1`, `::ffff:7f00:1`) is this machine. */
+function loopbackIpv6(host: string): boolean {
+  let text = host.replace(/%.*$/, '');
+  // a dotted IPv4 tail becomes two groups
+  const tail = /(?:^|:)([0-9.]+\.[0-9.]+)$/.exec(text);
+  if (tail !== null) {
+    const v4 = ipv4Number(tail[1]);
+    if (v4 === null) return false;
+    text = `${text.slice(0, text.length - tail[1].length)}${(v4 >>> 16).toString(16)}:${(v4 & 0xffff).toString(16)}`;
+  }
+  const halves = text.split('::');
+  if (halves.length > 2) return false;
+  const head = halves[0] === '' ? [] : halves[0].split(':');
+  const rest = halves.length === 2 && halves[1] !== '' ? halves[1].split(':') : [];
+  if (halves.length === 1 && head.length !== 8) return false;
+  const groups = [...head, ...Array<string>(8 - head.length - rest.length).fill('0'), ...rest];
+  if (groups.length !== 8 || groups.some((g) => !/^[0-9a-f]{1,4}$/.test(g))) return false;
+  const n = groups.map((g) => parseInt(g, 16));
+  const v4 = n[6] * 0x10000 + n[7];
+  if (n.slice(0, 7).every((g) => g === 0) && n[7] <= 1) return true;
+  return n.slice(0, 5).every((g) => g === 0) && (n[5] === 0xffff || n[5] === 0) && localIpv4(v4);
+}
+
+function realOrNull(p: string): string | null {
+  try {
+    return fs.realpathSync(p);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * True when a fetch or push repository is the repo `dir` is in (its top, `.git` or common git
+ * folder) or one of its worktrees. git reads a path as `<path>`, `<path>/.git` or `<path>.git`
+ * (enter_repo), from the folder it runs in or the repo's top. A remote only known when it runs is
+ * not judged here (owner pick "Allow unreadable remotes"); its refspecs still are.
+ */
+function selfRemote(word: string, dir: string): boolean {
+  if (word.includes(UNKNOWN) || !isLocalUrl(word)) return false;
+  const here = findRepo(dir);
+  if (here.kind !== 'repo') return false;
+  const common = realOrNull(here.commonDir);
+  const own = new Set([here.top, here.gitDir, here.commonDir].map(realOrNull));
+  const spelled = word.replace(FILE_URL, '');
+  for (const base of [dir, here.top]) {
+    const target = path.resolve(base, spelled);
+    for (const candidate of [target, path.join(target, '.git'), `${target}.git`]) {
+      const real = realOrNull(candidate);
+      if (real === null) continue;
+      if (own.has(real)) return true;
+      const there = findRepo(candidate);
+      if (there.kind === 'repo' && there.top === real && realOrNull(there.commonDir) === common) return true;
+    }
+  }
+  return false;
+}
+
+/** `git remote set-head` options by which git sets or drops the remote HEAD itself (git syntax). */
+const SET_HEAD_GIT_DECIDES = new Set(['-a', '--auto', '-d', '--delete']);
+
+/** Fixed refusals for a forged remote-tracking ref: no ref, path or URL is repeated. */
+const SELF_REMOTE_REFUSAL: Refusal = {
+  rule: 'protected-branch',
+  reason: 'Refused: this `git fetch` / `git push` names the repository itself (or one of its worktrees) as the remote, which can write any of its refs, remote-tracking ones included. Ask the user to run it with `!`.',
+};
+const REPLACE_REFUSAL: Refusal = {
+  rule: 'protected-branch',
+  reason: 'Refused: this git call writes a replace ref (under refs/replace/), which changes which commits git shows. Ask the user to run it with `!`.',
+};
+const REMOTE_TRACKING_REFUSAL: Refusal = {
+  rule: 'protected-branch',
+  reason: 'Refused: this git call writes a remote-tracking ref (under refs/remotes/), which the ship base is read from. Let a plain `git fetch` update those refs.',
+};
+
+/**
+ * The refusal for a fetch, pull or push that can forge a remote-tracking ref (gate-gaps-r3 Task 7),
+ * or null: a fetch or push whose remote is the repo itself, or an explicit refspec (fetch's
+ * `--refmap` too) whose destination is under refs/remotes/, for any remote (D50), except a fetch or
+ * pull refspec that is the remote's own default mapping (owner pick "Allow the exact default
+ * mapping"). A push refspec without `:` writes the same name on the remote.
+ */
+function remoteRefForge(facts: NonNullable<CommandPart['git']>): Refusal | null {
+  const { subcommand, args, dir } = facts;
+  if (subcommand !== 'fetch' && subcommand !== 'push' && subcommand !== 'pull') return null;
+  const words = subcommand === 'push' ? readPushWords(args).positional : positionalsOf(args, subcommand === 'fetch' ? FETCH_VALUES : PULL_VALUES);
+  const [repo, ...specs] = words;
+  if (subcommand !== 'pull' && repo !== undefined && selfRemote(repo, dir)) return SELF_REMOTE_REFUSAL;
+  const maps = subcommand === 'fetch' ? readOptions(args, FETCH_REFMAP).values.map(([, map]) => map) : [];
+  if (subcommand !== 'push' && [...specs, ...maps].some((spec) => spec.includes(':') && replaceRef(rawDestination(spec)))) return REPLACE_REFUSAL;
+  const explicit = specs.filter((spec) => subcommand === 'push' || (spec.includes(':') && !defaultMapping(repo, spec, dir)));
+  const destinations = [...explicit, ...maps.filter((map) => map.includes(':'))];
+  return destinations.some((spec) => remoteTracking(rawDestination(spec), subcommand !== 'push')) ? REMOTE_TRACKING_REFUSAL : null;
+}
+
+/**
+ * True when a fetch refspec is `[+]<b>:refs/remotes/<remote>/<b>` (also `refs/heads/<b>` or `heads/<b>`
+ * on the left) for a remote named by its configured name (not `.`, a path, a URL or a value only
+ * known when it runs), set in the repo's git config (ship round 1, S3a): what git's default fetch mapping
+ * writes anyway. No wildcards.
+ */
+function defaultMapping(remote: string | undefined, spec: string, dir: string): boolean {
+  if (remote === undefined || !REMOTE_NAME.test(remote) || existsOnDisk(path.resolve(dir, remote)) || !configuredRemote(remote, dir)) return false;
+  const plain = spec.startsWith('+') ? spec.slice(1) : spec;
+  if (plain.includes(REFSPEC_WILDCARD) || plain.includes(UNKNOWN)) return false;
+  const colon = plain.indexOf(':');
+  const branch = plain.slice(0, colon).replace(/^(?:refs\/heads\/|heads\/)/, '');
+  return branch !== '' && plain.slice(colon + 1) === `refs/remotes/${remote}/${branch}`;
+}
+
+/** Largest repo config file read (a read limit; real ones are a few KB). */
+const MAX_CONFIG_BYTES = 1024 * 1024;
+/** A `[remote "<name>"]` section header (git syntax). */
+const REMOTE_SECTION = /^\s*\[\s*remote\s+"([^"\\]*)"\s*\]/i;
+
+/**
+ * True when `name` is a remote in the git config of the repo `dir` is in (ship round 1, S3a): a `[remote "<name>"]`
+ * section. A config that can't be read, or that includes other files, counts as not configuring it.
+ */
+function configuredRemote(name: string, dir: string): boolean {
+  const here = findRepo(dir);
+  if (here.kind !== 'repo') return false;
+  const read = readRegularFile(path.join(here.commonDir, 'config'), MAX_CONFIG_BYTES, true);
+  if (typeof read === 'string' || /^\s*\[\s*include/im.test(read.text)) return false;
+  return read.text.split('\n').some((line) => REMOTE_SECTION.exec(line)?.[1] === name);
+}
 
 /** What the gate knows about the repository git uses in a folder (see repo-finder.ts). */
 export type RepoTrustOf = (dir: string) => 'trusted' | 'none' | { untrusted: string };
@@ -510,6 +797,8 @@ function historyMove(git: NonNullable<CommandPart['git']>, exists: Exists): stri
  */
 const REWRITERS = new Set(['filter-branch', 'filter-repo', 'fast-import', 'replace']);
 const REFLOG_DROPS = new Set(['delete', 'expire']);
+/** `git reflog` subcommands that drop or forge entries (git syntax, git 2.54; gate-gaps-r3 Task 4, owner pick 2026-11-19). */
+const REFLOG_CHANGES = new Set([...REFLOG_DROPS, 'drop', 'write']);
 const SUBTREE_MOVES = new Set(['merge', 'pull']);
 /** Options that name every branch (git syntax). */
 const EVERY_BRANCH = new Set(['--all', '--branches']);
