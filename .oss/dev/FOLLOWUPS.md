@@ -477,47 +477,47 @@
 - [ ] 2026-11-23 · low · over-refusal (older, R-266 round-7 stop rule) · `ROOT="$(git rev-parse --show-toplevel)"; ~/.oss/hooks/oss-log.sh init` is refused (refused at ec6ba2df and before; not a round-7 flip), while `cd "$(git rev-parse --show-toplevel)" && <hook>` is allowed. A command-substitution assignment before a hook call reads as an unread value on a hook line. Loosening it needs its own review · from: gate-gaps-r3 round 7 (rows7 R72ok-347, now info)
 
 - [ ] 2026-11-24 · gate-gaps-r3 round 8 (stop rule: older findings carded, not fixed) · OS write-sandbox card and PR open list:
-  - security · unbracketed IPv6 in ssh:// and git:// (`ssh://::1/x`, `git://::1/x`) is not read as loopback.
-  - security · a glob in the URL host (`ssh://127.0.0.?/x`, `{1}`, `{1,2}`) is not expanded before the host is judged.
-  - security · zsh setters not read as name setters on a git line: `strftime -s`, `zformat -f`, `sysread`, `source <(…)` / `. =(…)`, and `p=print; $p -v`.
-  - security · `g=git; $g …` hides git from git-line rules.
-  - security · `ssh://${H:-127.0.0.1}/x`: a default in the host is not read.
+  - security · loopback-remote rule (rules/remote-*): unbracketed IPv6 host forms are not read as loopback.
+  - security · loopback-remote rule: a glob in a URL host is not expanded before the host is judged.
+  - security · git-line env rules (command-reader.ts): some zsh builtins that set a variable are not read as setters.
+  - security · git-line rules (command-reader.ts): git named through a variable is not recognised as git.
+  - security · loopback-remote rule: a parameter default inside a URL host is not read.
   - over-refusal · the `${!…=…}` / `${(P)…=…}` refusal (R7-3) also fires on quoted commit text (`git commit -m 'docs: ${!n:=v}'`).
   - over-refusal · `$(npm bin)/tsc && <hook>` and `"$(command -v node)" x.js; <hook>` are refused (substitution as program word on a hook line, R7-2).
   - over-refusal (accepted R7-1) · IPv6 ssh/scp hosts (`ssh://git@[2001:db8::1]:22/x`, `git@[2001:db8::1]:x`) are refused.
-  - card correction · `launchctl setenv NAME VALUE` DOES reach a job started later with `launchctl submit` (the earlier card said it did not); with arch/launchctl no longer wrappers, a `launchctl setenv BASH_ENV …; launchctl submit -- <hook>` pair is refused only by the round-8 blunt rule on the submit part.
+  - card correction · launchctl setenv values DO reach a job started later with launchctl submit (the earlier card said they did not); such a pair is refused only by the round-8 blunt rule on the submit part (rules/oss-hook-env.ts).
 
 - [ ] 2026-11-24 · gate-gaps-r3 round 9 (stop rule: older re-check rows, allowed at both 874deba5 and fab500bb) · OS write-sandbox card and PR open list:
-  - security · indirection to arch or launchctl (`a=arch; $a …`, a program word from a variable or file) is not read every way.
-  - security · `xargs` feeding arch/launchctl or the program they run.
-  - security · `launchctl submit -- /bin/sh -c …` forms not yet covered by the R9-1 readings (where a reading is not read in full).
-  - security · `launchctl load` / `bootstrap` of a plist written on the same line (the job's ProgramArguments are not read).
-  - security · a script written on the same line and then run through arch or launchctl.
-  - security · interpreters run through arch/launchctl (`python3 -c`, `node -e`, `perl -e` text) are read only as far as the interpreter rules read them.
-  - security · git-core helpers (`/usr/libexec/git-core/git-*`) outside the arch path.
-  - security · other launchers not read as wrappers: `osascript`, `taskpolicy`, `sandbox-exec`, `xcrun`.
-  - security · `GIT_CONFIG_*` and `GIT_SSH_COMMAND` passed into `npm` (scripts that run git).
+  - security · arch/launchctl readings (command-reader.ts): a launcher named through a variable or file is not read every way.
+  - security · arch/launchctl readings: commands fed through xargs are not read.
+  - security · arch/launchctl readings: some launchctl submit script forms are not read in full.
+  - security · launchctl load/bootstrap: a job file written on the same line is not read.
+  - security · arch/launchctl readings: a script written on the same line and then launched is not read.
+  - security · arch/launchctl readings: interpreter text is read only as far as the interpreter rules read it.
+  - security · git rules: git-core helper programs outside the arch path are not recognised as git.
+  - security · launcher list (command-reader.ts WRAPPERS): some macOS launchers are not read as wrappers.
+  - security · git env rules: git config and ssh env passed into package-manager scripts that run git are not read.
 
 - [ ] 2026-11-24 · gate-gaps-r3 round 10 ("Accept, card them" + stop rule) · OS write-sandbox card and PR open list:
   - over-refusal (accepted) · `arch -arm64 brew install expect` and `… brew install unzip`: a later word read as a command of its own (R9-1) is refused (`expect`, `unzip` rules).
   - over-refusal (accepted) · `arch … brew|pip|npm install $(cat list)`: a substitution read as a program word on an arch line is refused.
   - over-refusal (accepted) · the 64-reading cap (R9-1) and the 2048-word cap across long arch lines; three levels of arch nesting refused as too complex.
-  - security (HIGH, older) · `env "$V" git fetch`: an env setting the gate can't read, outside arch.
-  - security · an arch or launchctl program held in a variable (`c=arch; $c …`) is not read every way.
-  - security · `launchctl asuser 501 $(cat cmd)`: the command comes from a substitution.
-  - security · `set -- git push origin main; "$@"`: the positional parameters as the program.
-  - security · `launchctl submit -p /bin/sh -- foo -c '…'` (refused by R10-1 (a) from round 10; kept on the card for the general `-p` program-path form).
-  - security · `arch -e GIT_SSH_COMMAND=x -arm64 sh -c 'git fetch'`: arch `-e` settings do not reach the commands of a `-c` script read under arch.
+  - security (HIGH, older) · git env rules: an env setting the gate can't read, given to env outside arch, is not refused.
+  - security · arch/launchctl readings: a launcher program held in a variable is not read every way.
+  - security · launchctl readings: a command that comes from a substitution is not read.
+  - security · program-word rules: positional parameters used as the program are not read.
+  - security · launchctl submit (rules/oss-hook-env.ts): the general program-path option form stays on the card (the literal form is refused since R10-1 (a)).
+  - security · arch readings: arch environment settings do not reach the commands of a script string read under arch.
 
 - [ ] 2026-11-24 · gate-gaps-r3 round 11 (stop rule: older round-10 re-check items) · OS write-sandbox card and PR open list:
-  - security · `arch -arm64 "$A" "$B" env …`: an arch option and its value both from variables (the option the gate reads is not the one that runs).
-  - security · `launchctl submit -l x -- "$P" push …`: the program after `--` comes from a variable.
+  - security · arch readings: an arch option and its value both taken from variables are misread.
+  - security · launchctl submit: a program after `--` taken from a variable is not read.
 
 - [ ] 2026-11-24 · gate-gaps-r3 round 12 ("this fix only" + stop rule) · OS write-sandbox card and PR open list:
-  - security (MEDIUM) · `launchctl debug <svc> --program /bin/sh [--environment …]`: debug's program and environment options are not read.
-  - security (LOW) · `launchctl submit -l -- -p /bin/sh foo -c …` without a second `--`, and `launchctl -- submit -l x -p …`.
-  - security (LOW) · `-? /bin/sh` when a file named `-p` exists (a glob option word).
-  - security (LOW) · `/usr/bin/$X[r]ch` and `[${X:-a}]rch`: a glob class built with a variable.
+  - security (MEDIUM) · launchctl option rules (rules/oss-hook-env.ts optionsRefused): launchctl debug's program and environment options are not read.
+  - security (LOW) · launchctl submit -p scan: some placements of `--` hide the program option.
+  - security (LOW) · launchctl submit -p scan: a glob option word that matches a file named like the option is not read.
+  - security (LOW) · arch/launchctl program check (hasGlobClass): a glob class built with a variable is not read.
   - over-refusal (accepted) · a class-glob script (`./build-[0-9].sh`) with a git, env or `--` argument is refused (R11-1 blunt rule).
   - over-refusal (accepted) · the submit `-p` scan matches an attached label (`-lmyapp`) or a `--` inside the program's arguments.
 - [ ] 2026-11-25 · medium · security-auditor · watcher/src/tool-gate/rules/oss-hook-env.ts:756 · security: launchctl submit's -p scan reads only literal option words; a -p built by an expansion the gate can't read is not treated as possibly -p (fail open). Suggested blunt fix: an unreadable option word before the last -- counts as possibly -p · from: gate-gaps-r3 (round 13)
