@@ -180,6 +180,22 @@ _oss_tl_archived() {
     _OSS_TL_FEATURE=$f _OSS_TL_DIR=$rel
 }
 
+# _oss_tl_d84 <proj>: complete-gaps D7, the single completed folder of this branch's feature that this branch added, as
+# the phase-result CLI's D84 lookup (`phase-result archived`) prints it; never a second lookup here. Sets _OSS_TL_FEATURE
+# and _OSS_TL_DIR, or returns 1 (an unfiled line) when the CLI or node is missing, the lookup refuses, or the printed
+# name or the folder fails the same checks B7 applies.
+_oss_tl_d84() {
+    local LC_ALL=C n f rel re='^([A-Za-z0-9_-][A-Za-z0-9._-]*)-[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+    _OSS_TL_FEATURE="" _OSS_TL_DIR=""
+    oss_phase_result_cli && oss_plugin_node 2>/dev/null || return 1
+    n=$(cd "$1" 2>/dev/null && oss_run_bounded_rc 10 "$OSS_ENV" PATH="$OSS_NODE_PATH" "$OSS_NODE" "$_OSS_PR_CLI" archived 2>/dev/null \
+        && printf '%s' "$OSS_BOUNDED_OUT") || return 1
+    [[ "$n" =~ ^[A-Za-z0-9._-]+$ && "$n" =~ $re ]] || return 1
+    f=${BASH_REMATCH[1]} rel=".oss/dev/completed/$n"
+    ((${#f} <= 128)) && _oss_tl_real_dirs "$1" "$rel" && test -O "$1/$rel" && oss_single_link "$1/$rel/timeline.ndjson" || return 1
+    _OSS_TL_FEATURE=$f _OSS_TL_DIR=$rel
+}
+
 # _oss_tl_real_dirs <proj> <rel-dir>: 0 only when every folder from <proj> down to <rel-dir> is a real directory,
 # not a link. Read-only, unlike oss_safe_target, which makes missing folders (B2-5).
 _oss_tl_real_dirs() {
@@ -226,6 +242,8 @@ oss_timeline_append() (
         # goes only into a folder archived today, so a branch kept after its PR merged, or a new branch reusing the
         # feature name, never files its lines into (and pushes them under) an old archive
         case "$kind" in merge | merge-unknown) ;; *) [[ "${dir: -10}" == "$("$_OSS_TL_DATE" +%Y-%m-%d)" ]] || feature="" dir="" ;; esac
+        # complete-gaps D7: a gate line of a ship re-run after the archive commit goes to the folder the D84 lookup picks
+        [[ "$kind" == gate && -z "$feature" ]] && _oss_tl_d84 "$proj" && feature=$_OSS_TL_FEATURE dir=$_OSS_TL_DIR
     fi
     rec=".oss/dev/timeline-unfiled.ndjson"
     [[ -n "$feature" ]] && rec="$dir/timeline.ndjson"

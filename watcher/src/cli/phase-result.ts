@@ -514,6 +514,14 @@ function mergedOrRefuse(args: Args, repo: string, v: Extract<Verdict, { ok: fals
 export function main(argv: string[]): number {
   // D85 info e + D88: complete's one 9 s budget (check, then mergedReady) starts here, inside the hook's 10 s watchdog.
   const deadline = Date.now() + MERGED_BUDGET_MS;
+  // complete-gaps D7: `archived` prints only the completed folder the D84 lookup picks (oss-timeline.sh files gate lines there).
+  if (argv.length === 1 && argv[0] === 'archived') {
+    const repo = resolveRepo(process.cwd());
+    const a = repo === null ? null : archivedFeature(repo, recordedBase(repo) ?? shipBase(repo, valueDir(repo)), runSnapshot(repo), deadline);
+    if (a?.ok !== true) return 1;
+    process.stdout.write(`${a.folder}\n`);
+    return 0;
+  }
   const args = parseArgs(argv);
   if (args === null) {
     process.stderr.write(USAGE);
@@ -541,7 +549,8 @@ export function main(argv: string[]): number {
   let where: FeatureDir = { kind: 'active', name: feature ?? '' };
   let missing: Extract<Verdict, { ok: false }> = { ok: false, id: 'no_feature', field: 'feature' };
   // D84 + D85: a ship re-run after the archive commit: the single completed folder this branch added, from assemble's base.
-  if (feature === null && args.phase === 'ship') {
+  // complete-gaps D2: a build fix round after the archive gets the same lookup (the merge proof stays ship-only).
+  if (feature === null && (args.phase === 'ship' || args.phase === 'build')) {
     // D86: the base assemble recorded for this run, else (nothing recorded yet) the one it would choose now.
     // D86 info a: the lookup spends from complete's one budget.
     const archived = archivedFeature(repo, recordedBase(repo) ?? shipBase(repo, valueDir(repo)), runSnapshot(repo), deadline);

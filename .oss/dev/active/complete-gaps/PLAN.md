@@ -44,6 +44,11 @@ Phase 0 would archive `ship-md-base-tests` (PROGRESS says "ship"). That is anoth
 **GREEN:** in `watcher/src/cli/phase-result.ts` `main()`, change `args.phase === 'ship'` to ship or build for the lookup only. The `--record-ready`, `mergedOrRefuse` and D86 5c branches stay `ship`-only. Rebuild `watcher/dist/cli/phase-result.cjs`.
 **REFACTOR:** name the phase set (`ARCHIVED_PHASES`) if it reads better.
 
+### Task 2b: (a) Gate lines go to the archived folder after the archive (D7)
+**Tests (RED):** fix acceptance case a3 so it records gate rounds through `oss-value.sh timeline gate`, as `prf_ship` does in phase-results.acceptance. Add a hooks test that, after the archive commit, writes a gate line into `completed/<F>-<date>/timeline.ndjson`; that with zero or 2+ added folders, or a folder for another feature, the line stays in `timeline-unfiled.ndjson`; and that a link or foreign file is refused.
+**GREEN:** the timeline gate path resolves the archived folder through the D84 lookup in the bundled phase-result CLI. No second implementation in bash. If the lookup is unavailable, fail closed to unfiled.
+**Regression:** phase-results.acceptance; timeline-*.test.sh (targeted).
+
 ### Task 3: (b) The one-time `phase-results-since` marker
 **Tests (RED), in the acceptance file plus a hooks unit test `hooks/__tests__/legacy-since-marker.test.sh`:**
 - [ ] `should write ~/.oss/ledger/phase-results-since once with the current UTC time` (dir 700, file 600)

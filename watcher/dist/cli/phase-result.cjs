@@ -2580,6 +2580,14 @@ function mergedOrRefuse(args, repo, v, deadline, merged = false) {
 }
 function main(argv) {
   const deadline = Date.now() + MERGED_BUDGET_MS;
+  if (argv.length === 1 && argv[0] === "archived") {
+    const repo2 = resolveRepo(process.cwd());
+    const a = repo2 === null ? null : archivedFeature(repo2, recordedBase(repo2) ?? shipBase(repo2, valueDir(repo2)), runSnapshot(repo2), deadline);
+    if (a?.ok !== true) return 1;
+    process.stdout.write(`${a.folder}
+`);
+    return 0;
+  }
   const args = parseArgs(argv);
   if (args === null) {
     process.stderr.write(USAGE);
@@ -2605,7 +2613,7 @@ function main(argv) {
   let feature = resolveFeature(repo);
   let where = { kind: "active", name: feature ?? "" };
   let missing = { ok: false, id: "no_feature", field: "feature" };
-  if (feature === null && args.phase === "ship") {
+  if (feature === null && (args.phase === "ship" || args.phase === "build")) {
     const archived = archivedFeature(repo, recordedBase(repo) ?? shipBase(repo, valueDir(repo)), runSnapshot(repo), deadline);
     if (archived.ok) {
       feature = archived.feature;

@@ -1,0 +1,10 @@
+{"v":1,"id":"3174dc57-956a-4be0-890a-2310fbe39722","ts":"2026-11-27T09:40:16Z","kind":"command","feature":"complete-gaps","session":"d42aa2d9-ec5e-420e-ad83-58e63cad8053","command":"ideate","status":"complete"}
+{"v":1,"id":"43051b49-0f83-4a02-a592-ecd69ec01f04","ts":"2026-11-27T09:40:32Z","kind":"command","feature":"complete-gaps","session":"d42aa2d9-ec5e-420e-ad83-58e63cad8053","command":"requirements","status":"start"}
+{"v":1,"id":"2e96cda3-6e12-40b7-9434-f094e9d2632f","ts":"2026-11-27T09:40:52Z","kind":"command","feature":"complete-gaps","session":"d42aa2d9-ec5e-420e-ad83-58e63cad8053","command":"requirements","status":"complete"}
+{"v":1,"id":"b4452aa8-f42a-4159-a231-585a00844c45","ts":"2026-11-27T09:41:02Z","kind":"command","feature":"complete-gaps","session":"d42aa2d9-ec5e-420e-ad83-58e63cad8053","command":"adr","status":"start"}
+{"v":1,"id":"53777bd0-6f0c-4736-8a30-32bb7136ac51","ts":"2026-11-27T09:41:21Z","kind":"command","feature":"complete-gaps","session":"d42aa2d9-ec5e-420e-ad83-58e63cad8053","command":"adr","status":"complete"}
+{"v":1,"id":"fab443ef-5841-4d36-9fa7-32eccf4b3c36","ts":"2026-11-27T10:20:23Z","kind":"command","feature":"complete-gaps","session":"d42aa2d9-ec5e-420e-ad83-58e63cad8053","command":"plan","status":"start"}
+{"v":1,"id":"150394bd-b81d-42cc-982e-466633408680","ts":"2026-11-27T10:22:45Z","kind":"command","feature":"complete-gaps","session":"d42aa2d9-ec5e-420e-ad83-58e63cad8053","command":"plan","status":"complete"}
+{"v":1,"id":"393f57c6-48e4-43dc-a8b9-7470a90347db","ts":"2026-11-27T10:23:00Z","kind":"command","feature":"complete-gaps","session":"d42aa2d9-ec5e-420e-ad83-58e63cad8053","command":"acceptance","status":"start"}
+{"v":1,"id":"3b42ab02-572a-46f8-83f6-3683d1283a69","ts":"2026-11-27T10:32:05Z","kind":"command","feature":"complete-gaps","session":"d42aa2d9-ec5e-420e-ad83-58e63cad8053","command":"acceptance","status":"complete"}
+{"v":1,"id":"f68a4627-c89a-4e6d-b538-ec4aecf26323","ts":"2026-11-27T10:38:23Z","kind":"command","feature":"complete-gaps","session":"d42aa2d9-ec5e-420e-ad83-58e63cad8053","command":"build","status":"start"}
