@@ -44,4 +44,14 @@ Each shell file run on its own as `env -i … HOME=$(mktemp -d) /bin/bash <file>
 - Real ~/.oss checked before and after: config.json mtime and the 21 hook files unchanged.
 - Not tested: a fork inheriting the temp HOME with `setupFiles: []` (needs a custom config, which the rules forbid); that bypass stays on card 3.
 
-## Last Updated: 2026-11-27 18:15 +07 by /oss:build
+### /oss:integration, 2026-11-27
+| Mock / seam | Where | Real check | Result |
+|---|---|---|---|
+| `mergedReady` (merge-ready → gh) mocked, expected never called on the build path | build-archived.test.ts | Ran acceptance case a1 (real bundled CLI, real hooks, real git) with a gh stub that logs every call. The log was cleared after the archive commit and read after the build fix round. A control call proved the log works. | 0 gh calls during build: matches the mock |
+| `test -O` overridden through BASH_ENV for foreign-owner cases | legacy-*, timeline-gate-archived | Every positive case runs without the seam, so the real `test -O` passes on owned dirs and files | matches |
+| foreign owner for real | — | Needs a second uid (sudo/chown), not available in tests | known limit; only the seam covers it |
+| oss-value.sh removes exported functions, so the seam can't reach oss-value | timeline-gate-archived | That test calls oss-timeline.sh directly for the foreign case, and checked the case fails when `test -O` is removed | covered |
+
+Probe script (not committed): `/private/tmp/claude-501/-Users-ysl-dev/d42aa2d9-ec5e-420e-ad83-58e63cad8053/scratchpad/gh-probe.sh`. No mismatches.
+
+## Last Updated: 2026-11-27 18:55 +07 by /oss:integration
