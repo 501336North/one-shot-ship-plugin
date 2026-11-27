@@ -32,7 +32,8 @@ Close the two real `complete` gaps left by phase-results (R-257): (a) a build fi
 **So that** the upgrade leaves no dead end, and nobody mistakes the phase for a verified one
 **Priority:** High
 
-**AC-002.1:** Given no `run/<phase>` row in the ledger, no `results/` entry for the feature in the repo, and no ledger `results/<feature>` entry, when `oss-notify --workflow <phase> complete` runs, then it exits 0, prints one fixed notice line, writes the ledger `unverified/<feature>/<phase>` marker and prints the chain.
+**AC-002.0 (D6):** Given the workflow state's current command is this phase with `currentCommandStartedAt` before the ledger `phase-results-since` marker, no `run/<phase>` row and no results, when the run's first non-start event (`quality_passed`, `pr_created`, `merged`, `task_complete` or `complete`) reaches oss-notify, then a ledger `legacy/<phase>` row is appended. Given a start after the marker, or a current command that is not this phase (a skipped start), no row is written, and `complete` refuses as today.
+**AC-002.1:** Given a `legacy/<phase>` row (D6) with no later `run/<phase>` row in the ledger, no `results/` entry for the feature in the repo, and no ledger `results/<feature>` entry, when `oss-notify --workflow <phase> complete` runs, then it exits 0, prints one fixed notice line, writes the ledger `unverified/<feature>/<phase>` marker and prints the chain.
 **AC-002.2:** Given the same, but with a repo `results/` entry or a ledger results entry for the feature, then `complete` still refuses (exit 1, no chain), as today.
 **AC-002.3:** Given a legacy pass, a later `oss-phase-result.sh check <phase>` still does not report verified.
 **AC-002.4:** Given a run row exists (a normal Sprint D run) with no valid result, then `complete` refuses as today: the legacy branch never applies.

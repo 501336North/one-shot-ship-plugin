@@ -16,7 +16,7 @@ With a consistent Sprint D install, archive → merge → `merged` → `complete
 ## Solution
 
 - **(a)** `build` gets the same archived-folder lookup as `ship`: no active feature, and the branch's own diff (from assemble's base) added exactly one `.oss/dev/completed/<F>-<date>/` folder whose `<F>` matches the branch name → assemble and check `build` there (`where.kind = 'completed'`). Every D84/D85/D86 rule carries over unchanged: same base, the snapshot, the one folder, the name match, the refusals and hints, and the deadline.
-- **(b)** At `complete`, a phase whose run is **legacy** passes with a one-line D17-style notice, and the phase is recorded as **unverified** (owner pick "Pass + mark unverified"). Legacy means all three hold: there is no `run/<phase>` row in the ledger; the feature has no `results/` entry in the repo; and the feature has no ledger `results/<feature>` entry. These are the same results tests D17 uses at start, plus the missing run row. The chain then runs. The unverified record uses the existing ledger `unverified/<feature>/<phase>` marker that the Stop dispatcher writes (ADR-1), so the timeline and the team view show it as unverified, never as verified.
+- **(b)** At `complete`, a phase whose run is **legacy** passes with a one-line D17-style notice, and the phase is recorded as **unverified** (owner pick "Pass + mark unverified"). Legacy means all three hold: there is no `run/<phase>` row in the ledger; the feature has no `results/` entry in the repo; and the feature has no ledger `results/<feature>` entry. These are the same results tests D17 uses at start, plus the missing run row. The chain then runs. The unverified record uses the existing ledger `unverified/<feature>/<phase>` marker that the Stop dispatcher writes (ADR-1), so the timeline and the team view show it as unverified, never as verified. **Narrowed by D6:** the run must also be proven pre-upgrade by a `legacy/<phase>` ledger row, recorded at the run's first non-start event when its workflow-state start time is older than the one-time `phase-results-since` marker.
 
 ## Approach
 
@@ -50,12 +50,16 @@ With a consistent Sprint D install, archive → merge → `merged` → `complete
 - Changing when the served ship step archives (it stays before the merge: one PR per feature).
 - A legacy path for `ideate` and `plan` beyond what (b)'s rule gives every phase. The rule is phase-generic and costs nothing extra.
 - The three leftover files in `~/.oss/hooks`: held for the owner's answer through OSS DETERMINISTIC.
-- A guard so that no test or clean-copy run can write into the real `~/.oss`. That widens FOLLOWUPS card 3 and gets its own feature.
+- ~~A guard so that no test or clean-copy run can write into the real `~/.oss`.~~ Moved into scope by D5 (owner pick "Add card 3", 2026-11-27): see **(c)** below.
+
+## (c) Real-~/.oss write guard (card 3, D5)
+
+A watcher vitest run, or a clean-copy run, must refuse to start when the HOME it would use is the real home, whose `.oss` is the real `~/.oss`. This is a globalSetup check that fails before any test file runs. The goal is that hooks, config and ledger can never be written by tests. /oss:plan settles the exact check (how "real home" is detected without trusting HOME itself, for example the passwd home from `os.userInfo()` compared to `HOME`) and where the guard applies (watcher vitest config, hooks shell test runner).
 - gate-discipline's gate-round code: not merged, and its design is being redone, so nothing here depends on it.
 
 ## Stress Test
 
-- **Security/abuse (Technical Debt):** (b) is a pass without a result. A model could skip `start` so that no run row exists, then send `complete`. That only passes for a feature that has no results anywhere, which is exactly D17's existing allowance at start. It is marked unverified, so the team view and `check` never show it as verified. Accepted as designed; the owner picked "Pass + mark unverified".
+- **Security/abuse (Technical Debt):** (b) is a pass without a result. As first designed, a model could skip `start` on a new feature and pass. A heads-up caught this, and the owner then picked D6, "Only pre-upgrade starts": a legacy pass needs a `legacy/<phase>` ledger row, recorded only for a run whose start is older than the one-time `phase-results-since` marker. A skipped start is refused.
 - **Feasibility:** (a) reuses D84's lookup as it is. The risk is that ship-only assumptions (merge proof, record-ready) leak into build. The unit test asserts that the build path never calls them.
 - **UX friction:** after the archive, a fix round prints the D17 notice at start ("no phase results for this project") because `oss-notify`'s resolver only sees `active/`. Accepted for now: assemble still applies the plan check, and complete still checks the result.
 - **Root cause (Technical Debt):** the mixed install came from a test run writing into the real home. It isn't fixed here; card 3 covers it.
