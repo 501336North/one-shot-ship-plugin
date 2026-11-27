@@ -695,3 +695,6 @@ agents/penetration-tester.md	node "$OFFLOAD" --agent "$AGENT_ID" --prompt-file /
 agents/penetration-tester.md	test -f "$HOME/.oss/config.json" && grep -qE '"apiKey"[[:space:]]*:[[:space:]]*"[A-Za-z0-9_-]' "$HOME/.oss/config.json" && echo "API key configured"
 agents/penetration-tester.md	umask 077; d="$(mktemp -d -t oss-offload.XXXXXX)" && echo "$d/prompt.md"
 agents/penetration-tester.md	{ rm -f -- "$PROMPT_FILE"; rmdir -- "${PROMPT_FILE%/prompt.md}"
+
+@pr241-override-wait
+commands/ship.md	sleep 1
