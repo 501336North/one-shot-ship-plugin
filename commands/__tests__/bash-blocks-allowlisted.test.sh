@@ -38,7 +38,7 @@ reason() {
         t74c-icon) echo "T74c put a time and size limit on the pre-existing icon download in /oss:login, T78c https-only and a byte stop (that same line, so the same one approval as before)" ;;
         t78-stale-hooks) echo "T78b: the stale-hooks guard sits in the /oss:settings save block, one Bash call that already prompts (its pr214-approval lines), so no new approval" ;;
         b10-pen-tester) echo "B10 (API ADR-018) added agents/penetration-tester.md, security-auditor.md's wrapper with its own name: the same lines that agent's pre-existing, key-check and t71-offload exemptions cover, so one approval each, as for security-auditor" ;;
-        pr241-override-wait) echo "#241 (98fe401d): /oss:ship waits for the hook to record an \"Override <gate>\" pick with sleep 1, at most 5 times, only on that rare path; owner pick 2026-11-27 \"Accept the prompt\": one approval, no allowlist change" ;;
+        pr241-override-wait) echo "#241 (98fe401d): /oss:ship waits for the hook to record an \"Override <gate>\" pick with sleep 1, at most 5 times, only on that rare path; owner pick 2026-11-27 \"Accept the prompt\": one approval per wait (at most 5), no allowlist change" ;;
         *) return 1 ;;
     esac
 }

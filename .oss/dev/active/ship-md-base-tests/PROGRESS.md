@@ -1,6 +1,6 @@
 # Progress: ship-md-base-tests (Sprint D fix PR)
 
-## Current Phase: build (T1-T3 done; ship next)
+## Current Phase: ship (gates passed round 1; PR into Sprint D, merge needs the owner pick)
 
 ## Tasks
 - [x] T1: Step 8 wording, so chain-step-contract passes (completed 2026-11-27)
@@ -10,4 +10,4 @@
 ## Blockers
 - None. Gate-discipline ships after this PR merges into Sprint D, and the merge needs the owner's pick.
 
-## Last Updated: 2026-11-27 10:47 +0700 by /oss:build
+## Last Updated: 2026-11-27 11:05 +0700 by /oss:ship
