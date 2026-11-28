@@ -1,18 +1,20 @@
 # Progress: complete-gaps
 
-## Current Phase: build
+## Current Phase: ship
 
 ## Tasks
 - [x] Task 1: Acceptance tests for (a), (b), (c) (completed 2026-11-27)
 - [x] Task 2: (a) archived lookup for build (completed 2026-11-27)
 - [x] Task 2b: (a) gate lines go to the archived folder after the archive, D7 (completed 2026-11-27)
-- [x] Task 3: (b) one-time phase-results-since marker (completed 2026-11-27)
-- [x] Task 4: (b) legacy/<phase> row at the first non-start event (completed 2026-11-27)
-- [x] Task 5: (b) legacy branch in the complete gate, D8 (completed 2026-11-27)
-- [x] Task 6: (c) real-HOME guard for watcher vitest (completed 2026-11-27)
+- [x] ~~Task 3: (b) one-time phase-results-since marker~~ (removed 2026-11-27, D11)
+- [x] ~~Task 4: (b) legacy/<phase> row~~ (replaced by the D9 snapshot in round 1, removed by D11)
+- [x] ~~Task 5: (b) legacy branch in the complete gate, D8~~ (removed 2026-11-27, D11)
+- [x] Task 6: (c) real-HOME guard for watcher vitest (completed 2026-11-27; hardened in ship rounds 1, 2, 4)
 - [x] Task 7: Docs (FOLLOWUPS, TESTING) (completed 2026-11-27)
+- [x] Ship rounds 1-4 (owner picks D9, D11, D12, D13): legacy pass dropped; old-archive check (D10 ii) hardened; 16 follow-ups appended (completed 2026-11-28)
+- [ ] Ship: final review, preflight (manual), commit, PR into feat/determinism-sprint/build, no merge (in progress)
 
 ## Blockers
-- None. Stop before ship: ship needs the coordinator's direction and the owner's pick.
+- None. Merging needs its own owner pick.
 
-## Last Updated: 2026-11-27 18:15 +07 by /oss:build
+## Last Updated: 2026-11-28 08:24 +07 by /oss:ship

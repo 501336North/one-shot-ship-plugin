@@ -187,6 +187,9 @@ _oss_tl_archived() {
 _oss_tl_d84() {
     local LC_ALL=C n f rel re='^([A-Za-z0-9_-][A-Za-z0-9._-]*)-[0-9]{4}-[0-9]{2}-[0-9]{2}$'
     _OSS_TL_FEATURE="" _OSS_TL_DIR=""
+    # complete-gaps D10 (iv), perf L3: no completed folder at all, nothing to look up, so no node start. find, never a
+    # glob (S2, round 2 R2-5): a caller's failglob (BASHOPTS) would abort the hook on no match
+    [[ -n "$("$OSS_FIND" "$1/.oss/dev/completed" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]] || return 1
     oss_phase_result_cli && oss_plugin_node 2>/dev/null || return 1
     n=$(cd "$1" 2>/dev/null && oss_run_bounded_rc 10 "$OSS_ENV" PATH="$OSS_NODE_PATH" "$OSS_NODE" "$_OSS_PR_CLI" archived 2>/dev/null \
         && printf '%s' "$OSS_BOUNDED_OUT") || return 1

@@ -54,4 +54,24 @@ Each shell file run on its own as `env -i … HOME=$(mktemp -d) /bin/bash <file>
 
 Probe script (not committed): `/private/tmp/claude-501/-Users-ysl-dev/d42aa2d9-ec5e-420e-ad83-58e63cad8053/scratchpad/gh-probe.sh`. No mismatches.
 
-## Last Updated: 2026-11-27 18:55 +07 by /oss:integration
+### /oss:ship rounds 1-4, 2026-11-27/28
+Every fix was test-first (RED seen, then GREEN) by delegated builders. Legacy tests (legacy-since-marker, legacy-row, legacy-complete) were deleted with the legacy pass (D11); acceptance b-cases now pin the refusal.
+
+| Suite (round 4, final tree) | Result |
+|---|---|
+| `tsc --noEmit` (watcher) | clean |
+| vitest phase-result-dist, phase-result.acceptance, build-archived, archived-verb | 115/115 |
+| vitest guard/real-home + hooks/oss-session-logging | 23/23 (real-home 17 cases) |
+| shell timeline-gate-archived | 10/10 |
+| shell timeline-archived | 41/41 |
+| shell timeline-gate | 8/8 |
+| shell complete-gaps.acceptance (a1-a3 + D11 b1-b4) | 9/9 |
+| shell phase-results.acceptance (incl. D88 post-squash) | 39/39 (263 s under load) |
+| shell oss-notify-complete-bounds / bounded-group / workflow-name (round 2, oss-notify back at merge base) | 9/9, 9/9, 12/12 |
+| npm audit (watcher, prod and full) | 0 vulnerabilities |
+
+- Not run by rule: hooks/__tests__/oss-notify-phase-result.test.sh, and the full watcher suite.
+- Real ~/.oss checked before and after each builder: config.json mtime and the 21 hook files unchanged.
+- Pen-test sandboxes (not committed): scratchpad/pen/r2, r3, r4 and sec-r3, sec-r4.
+
+## Last Updated: 2026-11-28 08:24 +07 by /oss:ship

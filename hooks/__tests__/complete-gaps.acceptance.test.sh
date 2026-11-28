@@ -5,12 +5,11 @@
 #           assembles and completes, with the result written in the completed folder; zero, two or another feature's
 #           completed folders refuse with the D85 hint and no chain; the ship re-run after the fix still merges and
 #           completes (D2, D84-D88).
-# @behavior (b) US-002: a ship that started before the phase-results hooks were installed (proved by the one-time
-#           ledger phase-results-since marker and a legacy/<phase> row recorded at the first non-start event) passes
-#           complete with a fixed notice, the ledger unverified marker and the chain; a skipped start, any results,
-#           or a run row after the legacy row refuse as today; check never reports such a phase verified (D3, D6).
-# @business-rule "No dead end across the upgrade, and nobody mistakes the phase for a verified one" (ADR-1); a pass
-#           without a result needs proof the run is pre-upgrade (D6).
+# @behavior (b) D11: there is no legacy pass. A run in flight across the plugin upgrade (its workflow state started long
+#           ago, no run row, no results) is refused at complete as today: no notice, no unverified marker, no chain, and
+#           no legacy-snapshot, phase-results-since or other legacy file is ever written under the ledger.
+# @business-rule "complete always needs a valid result; a phase in flight across the upgrade is re-run once" (D11:
+#           every proof of a pre-upgrade run the hooks could keep can be written by the model).
 #
 # Hermetic: temp HOME (the test's own and each sandbox's), temp git repo, a bare origin behind a github.com URL with gh
 # and npm stubs, a sandbox plugin root whose chain-trigger is a recorder, and terminal-notifier/osascript/say/afplay
@@ -200,92 +199,46 @@ if [[ $a_rc -eq 0 && $b_rc -eq 0 && $sa_rc -eq 0 && "$sa_out" == *'"verdict":"re
 else fail "AC-001.5: after the build fix round the ship re-run records ready, merges and completes" "build assemble rc=$a_rc ($a_out) build complete rc=$b_rc ($b_out) ship assemble rc=$sa_rc ($sa_out) record rc=$rec_rc ($rec_out) merge-test rc=$mt_rc complete rc=$rc ($out)"; fi
 cleanup
 
-# ---- (b) legacy helpers. The one-time marker (Task 3) says when the phase-results hooks were installed; the workflow
-#      state says the ship started before it (a pre-upgrade run): no run row, no results.
-MARKER_AT=2026-11-20T00:00:00Z
-since_marker() { # <iso> : ~/.oss/ledger/phase-results-since, dir 700, file 600
-    (umask 077; mkdir -p "$T/home/.oss/ledger"); chmod 700 "$T/home/.oss/ledger"
-    printf '%s\n' "$1" > "$T/home/.oss/ledger/phase-results-since"; chmod 600 "$T/home/.oss/ledger/phase-results-since"
-}
+# ---- (b) D11 helpers. A pre-upgrade run: its workflow state is already there, started long ago; no run row, no results.
 wf_state_file() { # <currentCommand> <currentCommandStartedAt>
     mkdir -p "$T/repo/.oss"
     jq -cn --arg c "$1" --arg s "$2" '{currentCommand: $c, currentCommandStartedAt: $s}' > "$T/repo/.oss/workflow-state.json"
 }
-legacy_sandbox() { sandbox; since_marker "$MARKER_AT"; wf_state_file ship 2026-11-01T00:00:00Z; }
 ledger() { HOME="$T/home" ledger_dir "$T/repo"; }
 LEGACY_NOTICE="started before phase results"
-
-# b1. AC-002.0/AC-002.1: pr_created records legacy/ship; complete passes with the notice, the unverified marker, the chain.
-legacy_sandbox
-p_out=$(notify ship pr_created '{}' 2>&1)
-out=$(notify ship complete '{}' 2>&1); rc=$?
-L=$(ledger)
-if [[ -s "$L/legacy/ship" && $rc -eq 0 && "$out" == *"$LEGACY_NOTICE"* && -e "$L/unverified/$FEATURE/ship" \
-    && "$out" == *---CHAIN_COMMANDS---* ]] && chain_fired; then
-    pass "AC-002.1: a ship started before the marker passes complete with the notice, the unverified marker and the chain"
-else fail "AC-002.1: a ship started before the marker passes complete with the notice, the unverified marker and the chain" "legacy row=$(cat "$L/legacy/ship" 2>&1) pr_created=($p_out) complete rc=$rc ($out) unverified=$(ls "$L/unverified/$FEATURE" 2>&1)"; fi
-cleanup
-
-# b2. D6 timing: merged (the first non-start event) resets the workflow state; the legacy row recorded there still lets
-#     complete pass.
-legacy_sandbox
-notify ship merged '{}' >/dev/null 2>&1
-out=$(notify ship complete '{}' 2>&1); rc=$?
-L=$(ledger)
-if [[ $rc -eq 0 && "$out" == *"$LEGACY_NOTICE"* && -e "$L/unverified/$FEATURE/ship" && "$out" == *---CHAIN_COMMANDS---* ]] && chain_fired; then
-    pass "D6: legacy complete passes after merged reset the workflow state"
-else fail "D6: legacy complete passes after merged reset the workflow state" "complete rc=$rc ($out) legacy row=$(cat "$L/legacy/ship" 2>&1)"; fi
-cleanup
-
-# b3. D6: a skipped start on a new feature is not legacy: the current command is not ship, or ship started after the marker.
-skipped_case() { # <label> <currentCommand> <startedAt>
-    sandbox; since_marker "$MARKER_AT"; wf_state_file "$2" "$3"
-    notify ship pr_created '{}' >/dev/null 2>&1
-    out=$(notify ship complete '{}' 2>&1); rc=$?
-    L=$(ledger)
-    if [[ $rc -eq 1 && ! -e "$L/legacy/ship" && ! -e "$L/unverified/$FEATURE/ship" && "$out" != *"$LEGACY_NOTICE"* ]] && ! chain_fired; then
-        pass "D6: $1: no legacy row, complete refuses, no chain"
-    else fail "D6: $1: no legacy row, complete refuses, no chain" "complete rc=$rc ($out) legacy row=$(cat "$L/legacy/ship" 2>&1)"; fi
+# legacy_files: any legacy-snapshot*, phase-results-since* or *legacy* file anywhere under the sandbox ledger.
+legacy_files() {
+    [[ -d "$T/home/.oss/ledger" ]] || return 0
+    find "$T/home/.oss/ledger" \( -name 'legacy-snapshot*' -o -name 'phase-results-since*' -o -name '*legacy*' \) -print 2>/dev/null
+}
+# inflight_refuses <label> <phase> <first event> ; <phase> was started before the upgrade; the first new-hooks event in the
+# repo key is <first event>, then <phase> complete.
+inflight_refuses() {
+    sandbox; wf_state_file "$2" 2026-11-01T00:00:00Z
+    notify "$2" "$3" '{}' >/dev/null 2>&1
+    out=$(notify "$2" complete '{}' 2>&1); rc=$?
+    L=$(ledger); lf=$(legacy_files)
+    if [[ $rc -eq 1 && "$out" == *"$2 complete refused"* && "$out" != *"$LEGACY_NOTICE"* && "$out" != *---CHAIN_COMMANDS---* \
+        && ! -e "$L/unverified/$FEATURE/$2" && -z "$lf" ]] && ! chain_fired; then
+        pass "D11: $1: complete refuses as today, no notice, no unverified marker, no chain, no legacy files"
+    else fail "D11: $1: complete refuses as today, no notice, no unverified marker, no chain, no legacy files" "complete rc=$rc ($out) unverified=$(ls "$L/unverified/$FEATURE" 2>&1) legacy files=($lf)"; fi
     cleanup
 }
-skipped_case "current command is build, not ship" build 2026-11-01T00:00:00Z
-skipped_case "ship started after the marker" ship 2026-11-25T00:00:00Z
 
-# b4. AC-002.2: results in the repo or in the ledger keep today's refusal (deleting results/ skips nothing).
-results_case() { # <label> <repo|ledger>
-    legacy_sandbox
-    if [[ $2 == repo ]]; then mkdir -p "$T/repo/.oss/dev/active/$FEATURE/results"; echo '{}' > "$T/repo/.oss/dev/active/$FEATURE/results/plan.json"
-    else HOME="$T/home" ledger_append "$T/repo" "results/$FEATURE/plan" '{"sha256":"0","feature":"x","phase":"plan"}'; fi
-    notify ship pr_created '{}' >/dev/null 2>&1
-    out=$(notify ship complete '{}' 2>&1); rc=$?
-    L=$(ledger)
-    if [[ $rc -eq 1 && ! -e "$L/unverified/$FEATURE/ship" && "$out" != *"$LEGACY_NOTICE"* ]] && ! chain_fired; then
-        pass "AC-002.2: results in the $2 refuse legacy complete, no chain"
-    else fail "AC-002.2: results in the $2 refuse legacy complete, no chain" "complete rc=$rc ($out)"; fi
-    cleanup
-}
-results_case "repo" repo
-results_case "ledger" ledger
+# b1. a ship in flight across the upgrade (first new-hooks event pr_created) is refused at complete with today's message.
+inflight_refuses "a pre-upgrade ship after pr_created" ship pr_created
+# b2. the same after merged (which resets the workflow state) as the key's first event.
+inflight_refuses "a pre-upgrade ship after merged" ship merged
+# b3. a build in flight across the upgrade is refused the same way.
+inflight_refuses "a pre-upgrade build after task_complete" build task_complete
 
-# b5. AC-002.4: a run row after the legacy row (a new Sprint D ship start) refuses: the legacy branch never applies.
-legacy_sandbox
+# b4. today's message: the refusal names the missing result and the assemble step, as before the legacy pass.
+sandbox; wf_state_file ship 2026-11-01T00:00:00Z
 notify ship pr_created '{}' >/dev/null 2>&1
-L=$(ledger); had_row=no; [[ -s "$L/legacy/ship" ]] && had_row=yes
-notify ship start '{}' >/dev/null 2>&1
 out=$(notify ship complete '{}' 2>&1); rc=$?
-if [[ $had_row == yes && -s "$L/run/ship" && $rc -eq 1 && "$out" != *"$LEGACY_NOTICE"* && ! -e "$L/unverified/$FEATURE/ship" ]] && ! chain_fired; then
-    pass "AC-002.4: a run row after the legacy row refuses complete, no chain"
-else fail "AC-002.4: a run row after the legacy row refuses complete, no chain" "legacy row before start=$had_row run row=$(cat "$L/run/ship" 2>&1) complete rc=$rc ($out)"; fi
-cleanup
-
-# b6. AC-002.3: after a legacy pass, check ship still does not report verified.
-legacy_sandbox
-notify ship pr_created '{}' >/dev/null 2>&1
-c1_out=$(notify ship complete '{}' 2>&1); c1_rc=$?
-out=$(phase_result check ship 2>&1); rc=$?
-if [[ $c1_rc -eq 0 && "$c1_out" == *"$LEGACY_NOTICE"* && $rc -ne 0 && "$out" != *'"verification":"verified"'* ]]; then
-    pass "AC-002.3: check after a legacy pass is not verified"
-else fail "AC-002.3: check after a legacy pass is not verified" "legacy complete rc=$c1_rc ($c1_out) check rc=$rc ($out)"; fi
+if [[ $rc -eq 1 && "$out" == *"ship complete refused: no valid ship result"* && "$out" == *"assemble ship"* ]]; then
+    pass "D11: the pre-upgrade refusal is today's message (no valid ship result; assemble ship, then complete again)"
+else fail "D11: the pre-upgrade refusal is today's message (no valid ship result; assemble ship, then complete again)" "complete rc=$rc ($out)"; fi
 cleanup
 
 echo; echo "Ran $RUN, failed $FAILED"

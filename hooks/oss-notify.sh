@@ -213,99 +213,6 @@ _oss_ship_values_reset() (
     return 0
 )
 
-# _oss_owned_dirs <base> <name>...: makes each folder <base>/<name>/... in turn (mode 700) when missing; rc 1 unless every
-# one is a real directory, not a link, owned by this user.
-_oss_owned_dirs() {
-    local d=$1 c
-    shift
-    for c; do
-        d="$d/$c"
-        [[ -e "$d" || -L "$d" ]] || "$OSS_MKDIR" -m 700 "$d" 2>/dev/null
-        [[ -d "$d" && ! -L "$d" ]] && test -O "$d" || return 1
-    done
-}
-
-# _oss_feature_has_results <top> <feature>: true when <feature> has a repo results/ entry (any kind) or ledger results rows.
-_oss_feature_has_results() {
-    [[ -e "$1/.oss/dev/active/$2/results" || -L "$1/.oss/dev/active/$2/results" ]] || _oss_ledger_has_results "$1" "$2"
-}
-
-# _oss_since_marker: D6. Writes ~/.oss/ledger/phase-results-since (global, not per repo key) once, with the current UTC
-# time: when the phase-results hooks were installed. Never rewritten; ledger dir 700 and owned, marker file 600, links
-# refused. Best effort: never fails the hook.
-_oss_since_marker() (
-    local f="$HOME/.oss/ledger/phase-results-since"
-    _oss_owned_dirs "$HOME/.oss" ledger || return 0
-    [[ -e "$f" || -L "$f" ]] && return 0
-    (umask 077; set -C; /bin/date -u +%Y-%m-%dT%H:%M:%SZ > "$f") 2>/dev/null
-    return 0
-)
-
-# _oss_ledger_legacy <phase> <command>: D6 (AC-002.0). At a non-start event, appends {"startedAt","feature"} to
-# ~/.oss/ledger/<key>/legacy/<phase> once per startedAt, when the workflow state's currentCommand is <command>, its
-# currentCommandStartedAt is before the phase-results-since marker, no run/<phase> row has that startedAt, and the
-# feature has no repo or ledger results. Missing, linked or foreign marker, folder or file: nothing is written.
-_oss_ledger_legacy() (
-    unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_NAMESPACE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
-    local sf="$HOME/.oss/workflow-state.json" m="$HOME/.oss/ledger/phase-results-since" s mt k top feat f row
-    local iso='^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,9})?Z$'
-    [[ -n "$_OSS_PROJECT_DIR" && -d "$_OSS_PROJECT_DIR/.oss" ]] && sf="$_OSS_PROJECT_DIR/.oss/workflow-state.json"
-    [[ -d "$HOME/.oss/ledger" && ! -L "$HOME/.oss/ledger" ]] && test -O "$HOME/.oss/ledger" || return 0
-    [[ -f "$m" ]] && oss_single_link "$m" && test -O "$m" || return 0
-    IFS= read -r mt < "$m" 2>/dev/null; [[ "$mt" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || return 0
-    [[ "$("$OSS_JQ_BIN" -r '.currentCommand // empty' "$sf" 2>/dev/null)" == "$2" ]] || return 0
-    s=$("$OSS_JQ_BIN" -r '.currentCommandStartedAt // empty' "$sf" 2>/dev/null) && [[ "$s" =~ $iso ]] || return 0
-    # whole seconds only: a fraction within the marker's second is not strictly before it (fail closed)
-    [[ "${s:0:19}" < "${mt:0:19}" ]] || return 0
-    oss_phys_cwd; k=$(_oss_ledger_key "$_OSS_CWD") && cd "$_OSS_CWD" 2>/dev/null || return 0
-    feat=""; top=$("$OSS_GIT_BIN" rev-parse --show-toplevel 2>/dev/null) && { oss_resolve_feature "$top" || true; feat="${_OSS_FEATURE:-}"; }
-    [[ -z "$feat" || "$feat" =~ ^[A-Za-z0-9._-]+$ ]] || return 0
-    [[ -n "$feat" ]] && _oss_feature_has_results "$top" "$feat" && return 0
-    f="$HOME/.oss/ledger/$k/run/$1"
-    [[ -e "$f" || -L "$f" ]] && { oss_single_link "$f" && test -O "$f" || return 0
-        "$OSS_JQ_BIN" -e --arg s "$s" 'select(.startedAt == $s)' "$f" >/dev/null 2>&1 && return 0; }
-    _oss_owned_dirs "$HOME/.oss/ledger" "$k" legacy || return 0
-    f="$HOME/.oss/ledger/$k/legacy/$1"
-    oss_single_link "$f" && { [[ ! -e "$f" ]] || test -O "$f"; } || return 0
-    [[ -e "$f" ]] && "$OSS_JQ_BIN" -e --arg s "$s" 'select(.startedAt == $s)' "$f" >/dev/null 2>&1 && return 0
-    row=$("$OSS_JQ_BIN" -cn --arg a "$s" --arg b "$feat" '{startedAt: $a, feature: $b}') || return 0
-    (umask 077; printf '%s\n' "$row" >> "$f") 2>/dev/null
-    return 0
-)
-
-# _oss_legacy_complete <phase>: D3/D6/ADR-1 (AC-002.1-002.5). rc 0 when this complete is a legacy pass: a
-# legacy/<phase> row for this repo key, no run/<phase> row for the resolved feature (D8; any row when none resolves; rows sit in two files,
-# so no order between them is provable; fail closed), and the resolved feature has no repo or ledger results. It then
-# writes the ledger unverified/<feature>/<phase> marker (the stop-dispatch layout; skipped when the feature is "") and
-# prints the fixed notice. Missing, linked, foreign or unwritable: rc 1 (today's refusal). Values come from hook state only.
-_oss_legacy_complete() (
-    unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_NAMESPACE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
-    local l="$HOME/.oss/ledger" k top feat d f sid
-    oss_phys_cwd; k=$(_oss_ledger_key "$_OSS_CWD") && cd "$_OSS_CWD" 2>/dev/null || return 1
-    for d in "$l" "$l/$k" "$l/$k/legacy"; do [[ -d "$d" && ! -L "$d" ]] && test -O "$d" || return 1; done
-    f="$l/$k/legacy/$1"
-    [[ -f "$f" && -s "$f" ]] && oss_single_link "$f" && test -O "$f" || return 1
-    top=$("$OSS_GIT_BIN" rev-parse --show-toplevel 2>/dev/null) || return 1
-    feat=""; { oss_resolve_feature "$top" || true; feat="${_OSS_FEATURE:-}"; }
-    [[ -z "$feat" || "$feat" =~ ^[A-Za-z0-9._-]+$ ]] || return 1
-    # D8: only a run row of this feature refuses; with no feature, any run file refuses. Unreadable or unparsable: refuse.
-    f="$l/$k/run/$1"
-    if [[ -e "$f" || -L "$f" ]]; then
-        [[ -n "$feat" && -f "$f" ]] && oss_single_link "$f" && test -O "$f" || return 1
-        [[ "$("$OSS_JQ_BIN" -n --arg f "$feat" '[inputs | .feature == $f] | any' "$f" 2>/dev/null)" == false ]] || return 1
-    fi
-    if [[ -n "$feat" ]]; then
-        _oss_feature_has_results "$top" "$feat" && return 1
-        _oss_owned_dirs "$l/$k" unverified "$feat" || return 1
-        f="$l/$k/unverified/$feat/$1"
-        oss_single_link "$f" && { [[ ! -e "$f" ]] || test -O "$f"; } || return 1
-        sid="${CLAUDE_CODE_SESSION_ID:-}"; [[ "$sid" =~ ^[A-Za-z0-9-]{1,100}$ ]] || sid=""
-        (umask 077; "$OSS_JQ_BIN" -cn --arg a "$(/bin/date -u +%Y-%m-%dT%H:%M:%SZ)" --arg s "$sid" \
-            '{check: "legacy-complete", errorClass: "legacy", at: $a, session: $s}' > "$f") 2>/dev/null || return 1
-    fi
-    echo "no phase results for ${feat:-this project}: started before phase results; complete passes unverified"
-)
-
 # _oss_ledger_origin <run dir> <startedAt>: D40/D46/D50 (security M1, pen F4, pen M2a). Writes <run dir>/ship.origin,
 # one JSON line {"startedAt","refs":{"refs/remotes/<remote>/<name>":"<sha>",...}}: this ship run's start and each
 # remote ref's name and SHA now (every symref, each */HEAD included, is dropped: security M3, D51). Assemble ship
@@ -442,8 +349,6 @@ else
     SOUND="Glass"
 fi
 
-_oss_since_marker || true   # D6: once per run, before the start and complete gates
-
 # =============================================================================
 # Update workflow state (for Claude Code status line)
 # =============================================================================
@@ -460,8 +365,6 @@ if [[ "$USE_COPY_SERVICE" == true && "$COPY_TYPE" == "workflow" ]]; then
         ideate | plan | build | ship) _OSS_PHASE="$WORKFLOW_CMD" ;;
         ideate-team | plan-team | build-team | ship-team) _OSS_PHASE="${WORKFLOW_CMD%-team}" ;;
     esac
-    # D6: a pre-upgrade run's legacy row, at its first non-start event, before any gate or state change (merged resets)
-    [[ -z "$_OSS_PHASE" || "$WORKFLOW_EVENT" == start ]] || _oss_ledger_legacy "$_OSS_PHASE" "$WORKFLOW_CMD" || true
 
     # Start gate (D16), before any log line or state change: plan, build and ship need the previous phase's valid
     # result. D17: a feature with no results/ folder at all and no results rows in the ledger (made before R-257) starts
@@ -499,12 +402,7 @@ if [[ "$USE_COPY_SERVICE" == true && "$COPY_TYPE" == "workflow" ]]; then
         if [[ -z "$_OSS_PROJECT_DIR" ]]; then _OSS_GATE_WHY="no_repo"
         elif [[ -z "$_OSS_TOP_CWD" || "$_OSS_TOP_CWD" != "$_OSS_TOP_PROJ" ]]; then _OSS_GATE_WHY="repo_mismatch"
         fi
-        # D3/D6 (ADR-1): a run proven pre-upgrade passes unverified, with the notice and the ledger marker
-        _OSS_LEGACY=false
-        [[ -z "$_OSS_GATE_WHY" ]] && _oss_legacy_complete "$_OSS_PHASE" && _OSS_LEGACY=true
-        if [[ $_OSS_LEGACY == true ]]; then
-            if [[ -x "$LOG_SCRIPT" ]]; then "$LOG_SCRIPT" write "$WORKFLOW_CMD" "[legacy] $_OSS_PHASE complete passed unverified (no phase results)" 2>/dev/null || true; fi
-        elif [[ -n "$_OSS_GATE_WHY" ]] || ! _oss_phase_check "$_OSS_PHASE" "$_OSS_PROJECT_DIR"; then
+        if [[ -n "$_OSS_GATE_WHY" ]] || ! _oss_phase_check "$_OSS_PHASE" "$_OSS_PROJECT_DIR"; then
             _OSS_MSG="oss-notify: $WORKFLOW_CMD complete refused: no valid $_OSS_PHASE result ($_OSS_GATE_WHY); build it with oss-phase-result.sh assemble $_OSS_PHASE, then complete again"
             # D88 (pen medium): with no active feature folder (the merged path), the CLI already printed its cause's own
             # hint; rebuilding there breaks the ready row and loops, so no assemble advice is added.
@@ -527,7 +425,7 @@ if [[ "$USE_COPY_SERVICE" == true && "$COPY_TYPE" == "workflow" ]]; then
             exit 1
         fi
         # D26: a ship result whose gate evidence is not all captured reviewer verdicts passes, labelled (like D15)
-        if [[ "$_OSS_PHASE" == ship && $_OSS_LEGACY != true ]] && _OSS_UNC=$(printf '%s' "$OSS_BOUNDED_OUT" \
+        if [[ "$_OSS_PHASE" == ship ]] && _OSS_UNC=$(printf '%s' "$OSS_BOUNDED_OUT" \
             | "$OSS_JQ_BIN" -er 'select(.gateEvidence != "agent") | .uncapturedGates | join(", ")' 2>/dev/null) \
             && [[ -n "$_OSS_UNC" ]]; then
             echo "ship gates without a captured reviewer verdict: $_OSS_UNC (model-reported)"

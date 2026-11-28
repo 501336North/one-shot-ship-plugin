@@ -105,5 +105,39 @@ fresh; archive "demo-$DAY"
     run "$ROOT/hooks/oss-timeline.sh" gate 1 code-review pass "" "" full >/dev/null 2>"$T/err"); RC=$?; ERR=$(cat "$T/err")
 if [[ "$(gates_in "$UNF")" -eq 1 && "$(gates_in "$P/.oss/dev/completed/demo-$DAY/timeline.ndjson")" -eq 0 ]]; then pass "$name"; else fail "$name" "$(diag)"; fi
 
+name='should leave the gate line unfiled for a new branch off main whose base (oss.shipBase) reaches an old, merged archive (D10 ii, pen P5)'
+fresh; (cd "$P" && git branch oldbase && mkdir -p .oss/dev/completed && git mv .oss/dev/active/demo .oss/dev/completed/demo-2026-01-01 \
+    && git -c user.name=t -c user.email=t@t commit -q -m archive && git checkout -q main \
+    && git -c user.name=t -c user.email=t@t merge -q --no-ff -m merge feat/demo/build && git update-ref refs/remotes/origin/main main \
+    && git checkout -q -b feat/demo/again && git config --local oss.shipBase oldbase) >/dev/null 2>&1
+gate
+if [[ "$(gates_in "$UNF")" -eq 1 && "$(gates_in "$P/.oss/dev/completed/demo-2026-01-01/timeline.ndjson")" -eq 0 ]]; then pass "$name"; else fail "$name" "$(diag)"; fi
+
+# node_stub: the plugin's phase-result CLI becomes a wrapper that logs each node start to $T/node-calls, then runs the
+# real bundle (a node stub on PATH or in ~/.oss/node-path is refused: oss-node.sh never runs a program in a temp folder)
+node_stub() {
+    local cli="$T/plugin/watcher/dist/cli/phase-result.cjs"
+    : > "$T/node-calls"; rm -f "$cli"
+    printf 'require("fs").appendFileSync(%s, "start\\n");\nrequire(%s);\n' \
+        "$(jq -n --arg p "$T/node-calls" '$p')" "$(jq -n --arg p "$ROOT/watcher/dist/cli/phase-result.cjs" '$p')" > "$cli"
+}
+name='should start no node for an unfiled gate line when .oss/dev/completed has no entries (D10 iv, perf L3)'
+fresh; (cd "$P" && git rm -rq .oss/dev/active/demo && mkdir -p .oss/dev/completed && git -c user.name=t -c user.email=t@t commit -q -m 'drop active'); node_stub; gate
+if [[ "$(gates_in "$UNF")" -eq 1 && ! -s "$T/node-calls" ]]; then pass "$name"; else fail "$name" "$(diag) node-calls=$(wc -l < "$T/node-calls")"; fi
+
+name='should still start node for the lookup when .oss/dev/completed has an entry (control for the stub)'
+fresh; archive "demo-$DAY"; node_stub; gate
+if [[ -s "$T/node-calls" && "$(gates_in "$P/.oss/dev/completed/demo-$DAY/timeline.ndjson")" -eq 1 ]]; then pass "$name"; else fail "$name" "$(diag) node-calls=$(wc -l < "$T/node-calls" 2>/dev/null)"; fi
+
+name='should start no node and print no glob error when BASHOPTS=failglob and .oss/dev/completed is empty (round 2, R2-5: find, never a glob)'
+fresh; (cd "$P" && git rm -rq .oss/dev/active/demo && mkdir -p .oss/dev/completed && git -c user.name=t -c user.email=t@t commit -q -m 'drop active'); node_stub
+vd=$(run /bin/bash "$ROOT/hooks/oss-value.sh" dir 2>/dev/null)
+printf '1\n' > "$vd/round.txt"; printf 'code-review\n' > "$vd/gate.txt"; printf 'pass\n' > "$vd/verdict.txt"
+: > "$vd/findings.txt"; : > "$vd/fixed.txt"; printf 'full\n' > "$vd/mode.txt"
+# BASHOPTS is read at start only by bash 4.1+ (macOS /bin/bash is 3.2, Linux /bin/bash is 5): the newest bash found runs it
+B=/bin/bash; for b in /opt/homebrew/bin/bash /usr/local/bin/bash; do [[ -x $b ]] && B=$b && break; done
+run /usr/bin/env BASHOPTS=failglob "$B" "$ROOT/hooks/oss-timeline.sh" gate 1 code-review pass "" "" full >/dev/null 2>"$T/err"; RC=$?; ERR=$(cat "$T/err")
+if [[ "$(gates_in "$UNF")" -eq 1 && ! -s "$T/node-calls" && "$ERR" != *'no match'* ]]; then pass "$name"; else fail "$name" "$(diag) node-calls=$(wc -l < "$T/node-calls")"; fi
+
 echo "Ran $RUN, failed $FAILED"
 [[ $FAILED -eq 0 ]]

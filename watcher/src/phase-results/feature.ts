@@ -70,13 +70,77 @@ export function archivedFeature(repo: string, base: string, remoteRefs: Readonly
   const added = branchAddedPaths(repo, base, remoteRefs, '.oss/dev/completed/', deadline);
   if (added === 'timeout') return { ok: false, reason: 'timeout' };
   if (added === null) return { ok: false, reason: 'none' };
-  const folders = [...new Set(added.map((p) => COMPLETED_RE.exec(p)?.[1]))]
+  const folders = [...new Set(added.paths.map((p) => COMPLETED_RE.exec(p)?.[1]))]
     .filter((n): n is string => n !== undefined && ARCHIVED_RE.exec(n)?.[1] === named);
   if (folders.length > 1) return { ok: false, reason: 'several' };
   const folder = folders[0];
   if (folder === undefined) return { ok: false, reason: ignoredArchive(repo) ? 'ignored' : 'none' };
   const st = fs.lstatSync(path.join(repo, '.oss', 'dev', 'completed', folder), { throwIfNoEntry: false });
-  return st?.isDirectory() === true ? { ok: true, feature: named, folder } : { ok: false, reason: 'none' };
+  if (st?.isDirectory() !== true) return { ok: false, reason: 'none' };
+  const isNew = archiveIsNew(repo, folder, base, deadline, added.mergeBase);
+  if (isNew !== 'yes') return { ok: false, reason: isNew === 'timeout' ? 'timeout' : 'none' };
+  return { ok: true, feature: named, folder };
+}
+
+/**
+ * complete-gaps D10 (ii), pen P5 + ship rounds 2 and 4 (R2-1..R2-4, R4-1..R4-5): 'yes' only when `folder` is new on this
+ * branch: absent, compared ASCII-case-insensitively (R4-1: a case-insensitive disk folds a case-different name onto the
+ * old folder), from the tree of every merge base of HEAD with: the remote's main (refs/remotes/origin/main, else the
+ * remote HEAD only when it is a symbolic ref to a live refs/remotes/origin/* ref: R4-4), `base` (refs/heads/<base>, the
+ * lookup base), each refs/remotes/<remote>/<base> (R4-2), and `measuredFrom`, the merge base the added paths were
+ * measured from (R4-2). With no remote at all (a purely local repo) the remote's main is replaced by refs/heads/main,
+ * else refs/heads/master; with neither it refuses (R4-3). The folder's on-disk name must also equal `folder` exactly
+ * (R4-1). Not origin/main's own tree: after GitHub's squash merge it holds this branch's archive, and complete must
+ * still find it (phase-results.acceptance 13f10). So an old, merged archive is never this branch's, even when the
+ * branch commits a new file into it or a model-chosen base reaches it. Fails closed: a remote configured with neither
+ * ref, any git error or a time-out refuses ('timeout' when `deadline` ran out or a call timed out). No `git log` (it
+ * could run gpg.program through log.showSignature); `ls-tree` tells "absent" (exit 0, no output) from an error. A
+ * partial clone never fetches a missing object (GIT_NO_LAZY_FETCH, R4-5): it is a git error, so it refuses.
+ * Known limits: a stale or forged local origin/main (never fetched) is trusted as it is; a real merge commit (not a
+ * squash) of this branch refuses after the merge; an only remote not named origin refuses; a deliberately
+ * case-renamed or copied archive is the same as forging the results.
+ */
+export function archiveIsNew(
+  repo: string, folder: string, base: string, deadline = Infinity, measuredFrom?: string,
+): 'yes' | 'no' | 'timeout' {
+  const run = (args: string[], okCodes = [0]): string => {
+    const left = Math.min(2000, deadline - Date.now());
+    if (left <= 0) throw new Error('timeout');
+    const env = { ...gitEnv(), GIT_CONFIG_NOSYSTEM: '1', GIT_NO_LAZY_FETCH: '1', PATH: '/usr/bin:/bin' };
+    const r = spawnSync(gitBin(), ['-c', 'core.fsmonitor=', '-c', 'core.hooksPath=/dev/null', '--literal-pathspecs', ...args], {
+      cwd: repo, env, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'], timeout: left,
+    });
+    if ((r.error as NodeJS.ErrnoException | undefined)?.code === 'ETIMEDOUT') throw new Error('timeout');
+    if (r.error !== undefined || r.status === null || !okCodes.includes(r.status)) throw new Error('git');
+    return r.stdout.trim();
+  };
+  const resolve = (ref: string): string => run(['rev-parse', '--verify', '-q', `${ref}^{commit}`], [0, 1]);
+  try {
+    if (!fs.readdirSync(path.join(repo, '.oss', 'dev', 'completed')).includes(folder)) return 'no';
+    const head = run(['rev-parse', '--verify', 'HEAD^{commit}']);
+    let main = resolve('refs/remotes/origin/main');
+    if (main === '') {
+      const target = run(['symbolic-ref', '-q', 'refs/remotes/origin/HEAD'], [0, 1]);
+      if (target.startsWith('refs/remotes/origin/') && target !== 'refs/remotes/origin/HEAD') main = resolve(target);
+    }
+    if (main === '' && run(['remote']) !== '') return 'no';
+    if (main === '') main = resolve('refs/heads/main') || resolve('refs/heads/master');
+    if (main === '') return 'no';
+    const ends = [main, `refs/heads/${base}`];
+    for (const line of run(['for-each-ref', '--format=%(refname)', `refs/remotes/*/${base}`]).split('\n')) {
+      if (/^refs\/remotes\/[^/]+\/(.+)$/.exec(line)?.[1] === base) ends.push(line);
+    }
+    const points = new Set(ends.map((end) => run(['merge-base', head, end])));
+    if (measuredFrom !== undefined) points.add(measuredFrom);
+    const lower = folder.toLowerCase();
+    for (const c of points) {
+      const names = run(['ls-tree', '--full-tree', '--name-only', c, '--', '.oss/dev/completed/']).split('\n');
+      if (names.some((n) => n.slice('.oss/dev/completed/'.length).toLowerCase() === lower)) return 'no';
+    }
+    return 'yes';
+  } catch (e) {
+    return (e as Error).message === 'timeout' ? 'timeout' : 'no';
+  }
 }
 
 /**

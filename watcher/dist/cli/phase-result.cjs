@@ -1330,7 +1330,7 @@ function branchAddedPaths(repo, base, remoteRefs, dir, deadline = Infinity) {
   try {
     const { mergeBase, headSha: headSha2 } = diffBase(repo, base, remoteRefs);
     const out = runGit(repo, [...DIFF, "--name-only", "--diff-filter=A", "-z", mergeBase, headSha2, "--", dir], [0], true, PATH_LIST_BUFFER).out;
-    return out.split("\0").filter((p) => p !== "");
+    return { paths: out.split("\0").filter((p) => p !== ""), mergeBase };
   } catch (e) {
     return e instanceof GitError && e.timedOut ? "timeout" : null;
   } finally {
@@ -2054,12 +2054,59 @@ function archivedFeature(repo, base, remoteRefs, deadline = Infinity) {
   const added = branchAddedPaths(repo, base, remoteRefs, ".oss/dev/completed/", deadline);
   if (added === "timeout") return { ok: false, reason: "timeout" };
   if (added === null) return { ok: false, reason: "none" };
-  const folders = [...new Set(added.map((p) => COMPLETED_RE.exec(p)?.[1]))].filter((n) => n !== void 0 && ARCHIVED_RE.exec(n)?.[1] === named);
+  const folders = [...new Set(added.paths.map((p) => COMPLETED_RE.exec(p)?.[1]))].filter((n) => n !== void 0 && ARCHIVED_RE.exec(n)?.[1] === named);
   if (folders.length > 1) return { ok: false, reason: "several" };
   const folder = folders[0];
   if (folder === void 0) return { ok: false, reason: ignoredArchive(repo) ? "ignored" : "none" };
   const st = fs9.lstatSync(path8.join(repo, ".oss", "dev", "completed", folder), { throwIfNoEntry: false });
-  return st?.isDirectory() === true ? { ok: true, feature: named, folder } : { ok: false, reason: "none" };
+  if (st?.isDirectory() !== true) return { ok: false, reason: "none" };
+  const isNew = archiveIsNew(repo, folder, base, deadline, added.mergeBase);
+  if (isNew !== "yes") return { ok: false, reason: isNew === "timeout" ? "timeout" : "none" };
+  return { ok: true, feature: named, folder };
+}
+function archiveIsNew(repo, folder, base, deadline = Infinity, measuredFrom) {
+  const run = (args, okCodes = [0]) => {
+    const left = Math.min(2e3, deadline - Date.now());
+    if (left <= 0) throw new Error("timeout");
+    const env = { ...gitEnv(), GIT_CONFIG_NOSYSTEM: "1", GIT_NO_LAZY_FETCH: "1", PATH: "/usr/bin:/bin" };
+    const r = (0, import_node_child_process4.spawnSync)(gitBin(), ["-c", "core.fsmonitor=", "-c", "core.hooksPath=/dev/null", "--literal-pathspecs", ...args], {
+      cwd: repo,
+      env,
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: left
+    });
+    if (r.error?.code === "ETIMEDOUT") throw new Error("timeout");
+    if (r.error !== void 0 || r.status === null || !okCodes.includes(r.status)) throw new Error("git");
+    return r.stdout.trim();
+  };
+  const resolve3 = (ref) => run(["rev-parse", "--verify", "-q", `${ref}^{commit}`], [0, 1]);
+  try {
+    if (!fs9.readdirSync(path8.join(repo, ".oss", "dev", "completed")).includes(folder)) return "no";
+    const head = run(["rev-parse", "--verify", "HEAD^{commit}"]);
+    let main2 = resolve3("refs/remotes/origin/main");
+    if (main2 === "") {
+      const target = run(["symbolic-ref", "-q", "refs/remotes/origin/HEAD"], [0, 1]);
+      if (target.startsWith("refs/remotes/origin/") && target !== "refs/remotes/origin/HEAD") main2 = resolve3(target);
+    }
+    if (main2 === "" && run(["remote"]) !== "") return "no";
+    if (main2 === "") main2 = resolve3("refs/heads/main") || resolve3("refs/heads/master");
+    if (main2 === "") return "no";
+    const ends = [main2, `refs/heads/${base}`];
+    for (const line of run(["for-each-ref", "--format=%(refname)", `refs/remotes/*/${base}`]).split("\n")) {
+      if (/^refs\/remotes\/[^/]+\/(.+)$/.exec(line)?.[1] === base) ends.push(line);
+    }
+    const points = new Set(ends.map((end) => run(["merge-base", head, end])));
+    if (measuredFrom !== void 0) points.add(measuredFrom);
+    const lower = folder.toLowerCase();
+    for (const c of points) {
+      const names = run(["ls-tree", "--full-tree", "--name-only", c, "--", ".oss/dev/completed/"]).split("\n");
+      if (names.some((n) => n.slice(".oss/dev/completed/".length).toLowerCase() === lower)) return "no";
+    }
+    return "yes";
+  } catch (e) {
+    return e.message === "timeout" ? "timeout" : "no";
+  }
 }
 function ignoredArchive(repo) {
   return [".oss/dev/completed/", ".oss/dev/completed/x"].some((p) => (0, import_node_child_process4.spawnSync)(gitBin(), ["check-ignore", "-q", "--", p], {
