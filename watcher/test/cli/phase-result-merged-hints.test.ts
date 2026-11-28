@@ -49,6 +49,8 @@ async function completeCheck(): Promise<{ rc: number; err: string }> {
     return true;
   });
   vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+  // The test owns the clock: a loaded machine cannot spend complete's 9 s budget, so each git and gh call gets all of it.
+  vi.spyOn(Date, 'now').mockReturnValue(Date.now());
   const rc = main(['check', 'ship', '--repo', repo]);
   vi.restoreAllMocks();
   return { rc, err: err.join('') };
