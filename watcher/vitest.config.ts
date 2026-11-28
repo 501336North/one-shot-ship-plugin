@@ -5,6 +5,8 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     include: ['test/**/*.test.ts'],
+    // Runs once in the main process before any fork: swaps a real (passwd) HOME for a temp dir
+    globalSetup: ['./test/global-setup.ts'],
     // Global setup file ensures clean state before each test
     setupFiles: ['./test/setup.ts'],
     // CRITICAL: Force single-threaded execution to avoid race conditions

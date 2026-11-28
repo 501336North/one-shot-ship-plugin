@@ -367,14 +367,16 @@ function diffBase(repo: string, base: string, remoteRefs: ReadonlyMap<string, st
  * D85 (gate round 15): the paths under `dir` that this branch added, from the same merge base assemble ship diffs from
  * (diffBase), so a stale local base never counts another feature's commits from origin as this branch's. 'timeout' when
  * a git call ran past its time limit (D85 info b) or past `deadline` (D86 info a: the CLI's shared budget); null on any
- * other git failure.
+ * other git failure. complete-gaps R4-2: with the merge base the paths were measured from.
  */
-export function branchAddedPaths(repo: string, base: string, remoteRefs: ReadonlyMap<string, string>, dir: string, deadline = Infinity): string[] | 'timeout' | null {
+export function branchAddedPaths(
+  repo: string, base: string, remoteRefs: ReadonlyMap<string, string>, dir: string, deadline = Infinity,
+): { paths: string[]; mergeBase: string } | 'timeout' | null {
   callerDeadline = deadline;
   try {
     const { mergeBase, headSha } = diffBase(repo, base, remoteRefs);
     const out = runGit(repo, [...DIFF, '--name-only', '--diff-filter=A', '-z', mergeBase, headSha, '--', dir], [0], true, PATH_LIST_BUFFER).out;
-    return out.split('\0').filter((p) => p !== '');
+    return { paths: out.split('\0').filter((p) => p !== ''), mergeBase };
   } catch (e) {
     return e instanceof GitError && e.timedOut ? 'timeout' : null;
   } finally {
