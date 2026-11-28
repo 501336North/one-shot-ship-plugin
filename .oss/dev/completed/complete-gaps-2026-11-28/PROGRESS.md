@@ -12,9 +12,12 @@
 - [x] Task 6: (c) real-HOME guard for watcher vitest (completed 2026-11-27; hardened in ship rounds 1, 2, 4)
 - [x] Task 7: Docs (FOLLOWUPS, TESTING) (completed 2026-11-27)
 - [x] Ship rounds 1-4 (owner picks D9, D11, D12, D13): legacy pass dropped; old-archive check (D10 ii) hardened; 16 follow-ups appended (completed 2026-11-28)
-- [ ] Ship: final review, preflight (manual), commit, PR into feat/determinism-sprint/build, no merge (in progress)
+- [x] Ship: final review, preflight (manual), commit, PR #246 into feat/determinism-sprint/build (completed 2026-11-28)
+- [x] Merged on the owner's pick by the coordinator: squash 5bf4830d → 809c9cdf (2026-11-28 09:38 +07); archived
+
+## Status: SHIPPED into Sprint D. Next: FOLLOWUPS card "record branch → archive at archive time" (D13).
 
 ## Blockers
-- None. Merging needs its own owner pick.
+- None.
 
-## Last Updated: 2026-11-28 08:24 +07 by /oss:ship
+## Last Updated: 2026-11-28 09:39 +07 by /oss:ship
